@@ -1,6 +1,13 @@
 __pycache__/
 *.pyc
 .DS_Store
-out
+out/
+checkpoints/
+venv/
+.venv/
+.python-version
 website/
 docs-minimind/
+dataset/pretrain_t2t_mini.jsonl
+dataset/sft_t2t_mini.jsonl
+.github/
