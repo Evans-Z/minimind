@@ -20,9 +20,10 @@ from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint
 warnings.filterwarnings('ignore')
 
 
-def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
+def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
     start_time = time.time()
     last_step = start_step
+    last_grad_norm = None
     for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
         input_ids = input_ids.to(args.device)
         labels = labels.to(args.device)
@@ -40,7 +41,8 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
 
         if step % args.accumulation_steps == 0:
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+            last_grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else float(grad_norm)
 
             scaler.step(optimizer)
             scaler.update()
@@ -56,6 +58,14 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
             eta_min = spend_time / max(step - start_step, 1) * (iters - step) // 60
             Logger(f'Epoch:[{epoch + 1}/{args.epochs}]({step}/{iters}), loss: {current_loss:.4f}, logits_loss: {current_logits_loss:.4f}, aux_loss: {current_aux_loss:.4f}, lr: {current_lr:.8f}, epoch_time: {eta_min:.1f}min')
             if wandb: wandb.log({"loss": current_loss, "logits_loss": current_logits_loss, "aux_loss": current_aux_loss, "learning_rate": current_lr, "epoch_time": eta_min})
+            if tb_writer and is_main_process():
+                global_step = epoch * iters + step
+                tb_writer.add_scalar("train/loss", current_loss, global_step)
+                tb_writer.add_scalar("train/logits_loss", current_logits_loss, global_step)
+                tb_writer.add_scalar("train/aux_loss", current_aux_loss, global_step)
+                tb_writer.add_scalar("train/lr", current_lr, global_step)
+                if last_grad_norm is not None:
+                    tb_writer.add_scalar("train/grad_norm", last_grad_norm, global_step)
 
         if (step % args.save_interval == 0 or step == iters) and is_main_process():
             model.eval()
@@ -73,7 +83,8 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
 
     if last_step > start_step and last_step % args.accumulation_steps != 0:
         scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+        last_grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else float(grad_norm)
         scaler.step(optimizer)
         scaler.update()
         optimizer.zero_grad(set_to_none=True)
@@ -102,6 +113,9 @@ if __name__ == "__main__":
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
     parser.add_argument("--wandb_project", type=str, default="MiniMind-Pretrain", help="wandb项目名")
+    parser.add_argument("--use_tensorboard", action="store_true", help="是否使用TensorBoard")
+    parser.add_argument("--tensorboard_logdir", type=str, default="../runs/pretrain", help="TensorBoard日志目录")
+    parser.add_argument("--tb_run_tag", type=str, default="", help="TensorBoard运行标签，如baseline/use_mhc")
     parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="是否使用torch.compile加速（0=否，1=是）")
     args = parser.parse_args()
 
@@ -128,6 +142,21 @@ if __name__ == "__main__":
         resume = 'must' if wandb_id else None
         wandb_run_name = f"MiniMind-Pretrain-Epoch-{args.epochs}-BatchSize-{args.batch_size}-LearningRate-{args.learning_rate}"
         wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
+
+    # ========== 4.1 TensorBoard ==========
+    tb_writer = None
+    if args.use_tensorboard and is_main_process():
+        try:
+            from torch.utils.tensorboard import SummaryWriter
+        except Exception as e:
+            raise RuntimeError("TensorBoard未安装，请先执行: pip install tensorboard") from e
+        tb_run_tag = args.tb_run_tag.strip()
+        safe_tag = tb_run_tag.replace(" ", "_").replace("/", "_")
+        run_name = f"{args.save_weight}_h{args.hidden_size}_{time.strftime('%Y%m%d-%H%M%S')}"
+        tb_log_dir = os.path.join(args.tensorboard_logdir, safe_tag, run_name) if safe_tag else os.path.join(args.tensorboard_logdir, run_name)
+        tb_writer = SummaryWriter(log_dir=tb_log_dir)
+        tb_writer.add_text("meta/run_tag", tb_run_tag if tb_run_tag else "none", 0)
+        Logger(f"TensorBoard日志目录: {tb_log_dir}, tag: {tb_run_tag if tb_run_tag else 'none'}")
     
     # ========== 5. 定义模型、数据、优化器 ==========
     model, tokenizer = init_model(lm_config, args.from_weight, device=args.device)
@@ -161,9 +190,12 @@ if __name__ == "__main__":
         loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=True)
         if skip > 0: 
             Logger(f'Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始')
-            train_epoch(epoch, loader, len(loader) + skip, start_step, wandb)
+            train_epoch(epoch, loader, len(loader) + skip, start_step, wandb, tb_writer)
         else:
-            train_epoch(epoch, loader, len(loader), 0, wandb)
+            train_epoch(epoch, loader, len(loader), 0, wandb, tb_writer)
+
+    if tb_writer:
+        tb_writer.close()
     
     # ========== 9. 清理分布进程 ==========
     if dist.is_initialized(): dist.destroy_process_group()
