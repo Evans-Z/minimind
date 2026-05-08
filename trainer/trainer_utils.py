@@ -14,6 +14,7 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import Sampler
 from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
 from model.model_minimind import MiniMindForCausalLM
+from model.model_minimind_mhc import MiniMindMHCForCausalLM
 
 def get_model_params(model, config):
     total = sum(p.numel() for p in model.parameters()) / 1e6
@@ -60,11 +61,13 @@ def setup_seed(seed: int):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoch=0, step=0, wandb=None, save_dir='../checkpoints', **kwargs):
+def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoch=0, step=0, wandb=None, save_dir='../checkpoints', model_variant='minimind', **kwargs):
     os.makedirs(save_dir, exist_ok=True)
+    variant_suffix = f'_{model_variant}' if model_variant else ''
     moe_path = '_moe' if lm_config.use_moe else ''
-    ckp_path = f'{save_dir}/{weight}_{lm_config.hidden_size}{moe_path}.pth'
-    resume_path = f'{save_dir}/{weight}_{lm_config.hidden_size}{moe_path}_resume.pth'
+    ckp_path = f'{save_dir}/{weight}_{lm_config.hidden_size}{variant_suffix}{moe_path}.pth'
+    resume_path = f'{save_dir}/{weight}_{lm_config.hidden_size}{variant_suffix}{moe_path}_resume.pth'
+    legacy_resume_path = f'{save_dir}/{weight}_{lm_config.hidden_size}{moe_path}_resume.pth'
 
     if model is not None:
         raw_model = model.module if isinstance(model, DistributedDataParallel) else model
@@ -105,8 +108,12 @@ def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoc
         del state_dict, resume_data
         torch.cuda.empty_cache()
     else:  # 加载模式
-        if os.path.exists(resume_path):
-            ckp_data = torch.load(resume_path, map_location='cpu')
+        load_path = resume_path
+        if not os.path.exists(load_path) and model_variant == 'minimind' and os.path.exists(legacy_resume_path):
+            load_path = legacy_resume_path
+            Logger(f'使用旧版resume路径: {load_path}')
+        if os.path.exists(load_path):
+            ckp_data = torch.load(load_path, map_location='cpu')
             saved_ws = ckp_data.get('world_size', 1)
             current_ws = dist.get_world_size() if dist.is_initialized() else 1
             if saved_ws != current_ws:
@@ -116,13 +123,21 @@ def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoc
         return None
 
 
-def init_model(lm_config, from_weight='pretrain', tokenizer_path='../model', save_dir='../out', device='cuda'):
+def init_model(lm_config, from_weight='pretrain', tokenizer_path='../model', save_dir='../out', device='cuda', model_variant='minimind'):
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-    model = MiniMindForCausalLM(lm_config)
+    if model_variant == 'mhc':
+        model = MiniMindMHCForCausalLM(lm_config)
+    else:
+        model = MiniMindForCausalLM(lm_config)
 
     if from_weight!= 'none':
+        variant_suffix = f'_{model_variant}' if model_variant else ''
         moe_suffix = '_moe' if lm_config.use_moe else ''
-        weight_path = f'{save_dir}/{from_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
+        weight_path = f'{save_dir}/{from_weight}_{lm_config.hidden_size}{variant_suffix}{moe_suffix}.pth'
+        legacy_weight_path = f'{save_dir}/{from_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
+        if not os.path.exists(weight_path) and model_variant == 'minimind' and os.path.exists(legacy_weight_path):
+            weight_path = legacy_weight_path
+            Logger(f'使用旧版权重路径: {weight_path}')
         weights = torch.load(weight_path, map_location=device)
         model.load_state_dict(weights, strict=False)
 

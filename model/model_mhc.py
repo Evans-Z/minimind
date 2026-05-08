@@ -1,12 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
-
-
-def safe_logit(p: float, eps: float) -> float:
-    p = min(max(p, eps), 1.0 - eps)
-    return math.log(p / (1.0 - p))
+import torch.nn.init as init
 
 
 class UnweightedRMSNorm(nn.Module):
@@ -57,12 +52,14 @@ class HyperConnection(nn.Module):
         hc_iters: int,
         hc_eps: float,
         rms_norm_eps: float,
+        initializer_range: float = 0.02,
     ):
         super().__init__()
         self.hc_mult = hc_mult
         self.hidden_size = hidden_size
         self.hc_iters = hc_iters
         self.hc_eps = hc_eps
+        self.initializer_range = initializer_range
         self.input_norm = UnweightedRMSNorm(rms_norm_eps)
         mix = (2 + self.hc_mult) * self.hc_mult
         self.fn = nn.Parameter(torch.empty(mix, self.hc_mult * self.hidden_size))
@@ -72,37 +69,14 @@ class HyperConnection(nn.Module):
         # H×H residual combine matrix that gets Sinkhorn-projected onto the
         # doubly-stochastic manifold). Each output gets its own learned scale.
         self.scale = nn.Parameter(torch.empty(3))
+        self.init_weights()
 
-        # initialise the parameters
-        self.reset_parameters()
-    
-    def reset_parameters(self):
-        hc = self.hc_mult
+    @torch.no_grad()
+    def init_weights(self):
+        init.normal_(self.fn, mean=0.0, std=self.initializer_range)
+        init.zeros_(self.base)
+        init.ones_(self.scale)
 
-        with torch.no_grad():
-            # set fn to zero
-            self.fn.data.zero_()
-            # set scale to small positive values
-            self.scale.data.fill_(0.01)
-            # set base strategitally, so that the initial output 
-            # is close to the identity mapping
-            # pre and post targets (after sigmoid + eps)
-            p_pre = max(1.0 / hc - self.hc_eps, self.hc_eps)
-            p_post = max(0.95 - self.hc_eps, self.hc_eps)
-
-            self.base.data[:hc].fill_(safe_logit(p_pre, self.hc_eps))
-            self.base.data[hc:2*hc].fill_(safe_logit(p_post, self.hc_eps))
-            
-            # comb target: identity-like matrix
-            # diagonal ~ 1.0 / hc, off-diagonal ~ 0.0
-            diag_p = max(1.0 / hc - self.hc_eps, self.hc_eps)
-            off_p = self.hc_eps
-            
-            comb = torch.full((hc, hc), safe_logit(off_p, self.hc_eps), device=self.base.device, dtype=self.base.dtype)
-            comb.fill_diagonal_(safe_logit(diag_p, self.hc_eps))
-            self.base.data[2*hc:].copy_(comb.reshape(-1))
-
-    
     def forward(self, hidden_streams: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         r"""
         Compute `pre`, `post`, `comb` from the mHC mapping (paper §2.2 eq. 8).
@@ -133,3 +107,38 @@ class HyperConnection(nn.Module):
         # the sublayer (attn / MLP).
         collapsed = (pre.unsqueeze(-1) * hidden_streams).sum(dim=-2).to(hidden_streams.dtype)
         return post, comb, collapsed
+
+
+class HyperHead(nn.Module):
+    """Final HC-stram collapse; used by MiniMindMHCModel before the shared RMSNorm"""
+
+    def __init__(
+        self, 
+        hc_mult: int, 
+        hidden_size: int, 
+        hc_eps: float,
+        rms_norm_eps: float,
+        initializer_range: float = 0.02,
+    ):
+        super().__init__()
+        self.hc_mult = hc_mult
+        self.input_norm = UnweightedRMSNorm(eps=rms_norm_eps)
+        self.eps = hc_eps
+        self.initializer_range = initializer_range
+        self.hc_fn = nn.Parameter(torch.empty(self.hc_mult, self.hc_mult * hidden_size))
+        self.hc_base = nn.Parameter(torch.empty(self.hc_mult))
+        self.hc_scale = nn.Parameter(torch.empty(1))
+        self.init_weights()
+    
+    @torch.no_grad()
+    def init_weights(self):
+        init.normal_(self.hc_fn, mean=0.0, std=self.initializer_range)
+        init.zeros_(self.hc_base)
+        init.ones_(self.hc_scale)
+        
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        flat = self.input_norm(hidden_states.flatten(2).float())
+        mixes = F.linear(flat, self.hc_fn.float())
+        pre = torch.sigmoid(mixes * self.hc_scale.float() + self.hc_base.float()) + self.eps
+
+        return (pre.unsqueeze(-1) * hidden_states).sum(dim=-2).to(hidden_states.dtype)
