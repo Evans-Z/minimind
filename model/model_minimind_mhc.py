@@ -18,12 +18,25 @@ from model.model_mhc import HyperConnection, HyperHead
 class MiniMindMHCConfig(MiniMindConfig):
     model_type = "minimind_mhc"
 
-    def __init__(self, hc_mult=4, hc_iters=20, hc_eps=1e-6, initializer_range=0.02, **kwargs):
+    def __init__(
+        self,
+        hc_mult=4,
+        hc_iters=20,
+        hc_eps=1e-6,
+        initializer_range=0.02,
+        hc_projector="sinkhorn",
+        hc_balm_r=1.0,
+        hc_balm_delta=1e-6,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.hc_mult = hc_mult
         self.hc_iters = hc_iters
         self.hc_eps = hc_eps
         self.initializer_range = initializer_range
+        self.hc_projector = hc_projector
+        self.hc_balm_r = hc_balm_r
+        self.hc_balm_delta = hc_balm_delta
 
 
 class MiniMindMHCBlock(nn.Module):
@@ -41,6 +54,9 @@ class MiniMindMHCBlock(nn.Module):
             config.hc_eps,
             config.rms_norm_eps,
             config.initializer_range,
+            config.hc_projector,
+            config.hc_balm_r,
+            config.hc_balm_delta,
         )
         self.mlp_hc = HyperConnection(
             config.hc_mult,
@@ -49,6 +65,9 @@ class MiniMindMHCBlock(nn.Module):
             config.hc_eps,
             config.rms_norm_eps,
             config.initializer_range,
+            config.hc_projector,
+            config.hc_balm_r,
+            config.hc_balm_delta,
         )
 
     def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None):

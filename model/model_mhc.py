@@ -53,6 +53,9 @@ class HyperConnection(nn.Module):
         hc_eps: float,
         rms_norm_eps: float,
         initializer_range: float = 0.02,
+        hc_projector: str = "sinkhorn",
+        hc_balm_r: float = 1.0,
+        hc_balm_delta: float = 1e-6,
     ):
         super().__init__()
         self.hc_mult = hc_mult
@@ -60,6 +63,15 @@ class HyperConnection(nn.Module):
         self.hc_iters = hc_iters
         self.hc_eps = hc_eps
         self.initializer_range = initializer_range
+        self.hc_projector = hc_projector.lower()
+        self.hc_balm_r = hc_balm_r
+        self.hc_balm_delta = hc_balm_delta
+        if self.hc_projector not in {"sinkhorn", "balm"}:
+            raise ValueError(f"Unsupported hc_projector={hc_projector!r}. Expected 'sinkhorn' or 'balm'.")
+        if self.hc_balm_r <= 0:
+            raise ValueError(f"hc_balm_r must be positive, got {self.hc_balm_r}")
+        if self.hc_balm_delta <= 0:
+            raise ValueError(f"hc_balm_delta must be positive, got {self.hc_balm_delta}")
         self.input_norm = UnweightedRMSNorm(rms_norm_eps)
         mix = (2 + self.hc_mult) * self.hc_mult
         self.fn = nn.Parameter(torch.empty(mix, self.hc_mult * self.hidden_size))
@@ -80,12 +92,11 @@ class HyperConnection(nn.Module):
     def forward(self, hidden_streams: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         r"""
         Compute `pre`, `post`, `comb` from the mHC mapping (paper §2.2 eq. 8).
-        `comb` is projected onto the doubly-stochastic manifold via Sinkhorn-
-        Knopp: starting from the sigmoid-positive matrix, alternate row and
-        column normalisation for `hc_sinkhorn_iters` steps. `pre` then collapses
-        the `hc_mult` parallel streams into a single sequence (input projection
-        into the sublayer); `post` and `comb` are returned for the caller to
-        apply on the sublayer output.
+        `comb` is projected onto the doubly-stochastic manifold via the selected
+        projector (`sinkhorn` or `balm`) for `hc_iters` steps. `pre` then
+        collapses the `hc_mult` parallel streams into a single sequence (input
+        projection into the sublayer); `post` and `comb` are returned for the
+        caller to apply on the sublayer output.
         """
         flat = self.input_norm(hidden_streams.flatten(start_dim=2).float())
         mix = F.linear(flat, self.fn.float())  # [B, S, (2+H)*H]
@@ -99,9 +110,30 @@ class HyperConnection(nn.Module):
             )
             + self.hc_eps
         )
-        for _ in range(self.hc_iters):
-            comb = comb / (comb.sum(dim=-1, keepdim=True) + self.hc_eps)
-            comb = comb / (comb.sum(dim=-2, keepdim=True) + self.hc_eps)
+        if self.hc_projector == "sinkhorn":
+            for _ in range(self.hc_iters):
+                comb = comb / (comb.sum(dim=-1, keepdim=True) + self.hc_eps)
+                comb = comb / (comb.sum(dim=-2, keepdim=True) + self.hc_eps)
+        elif self.hc_projector == "balm":
+            # Balanced ALM projection with assignment-structured operators:
+            # Ah = [row_sum(H); col_sum(H)], (A^T y)_ij = u_i + v_j.
+            hc = self.hc_mult
+            u = torch.zeros(*comb.shape[:-2], hc, device=comb.device, dtype=comb.dtype)
+            v = torch.zeros(*comb.shape[:-2], hc, device=comb.device, dtype=comb.dtype)
+            balm_step = self.hc_balm_r / (float(hc) + float(self.hc_balm_delta))
+            z_denom = 2.0 * float(hc) + float(self.hc_balm_delta)
+            for _ in range(self.hc_iters):
+                q = comb + (u.unsqueeze(-1) + v.unsqueeze(-2)) / self.hc_balm_r
+                comb_next = torch.clamp(q, min=0.0)
+                residual = 2.0 * comb_next - comb
+                row_sum = residual.sum(dim=-1)
+                col_sum = residual.sum(dim=-2)
+                z = (row_sum.sum(dim=-1) - float(hc)) / z_denom
+                u = u - balm_step * (row_sum - 1.0 - z.unsqueeze(-1))
+                v = v - balm_step * (col_sum - 1.0 - z.unsqueeze(-1))
+                comb = comb_next
+        else:
+            raise NotImplementedError(f"Unsupported hc_projector={self.hc_projector!r}")
         # Collapse the `hc_mult` parallel streams down to a single sequence using
         # the `pre` weights: one weighted sum across the stream axis, ready for
         # the sublayer (attn / MLP).
