@@ -29,6 +29,7 @@ class MiniMindMHCConfig(MiniMindConfig):
         hc_balm_delta=1e-6,
         hc_balm_diag_cost=0.0,
         hc_balm_offdiag_cost=0.0,
+        hc_balm_l2_cost=0.0,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -41,6 +42,7 @@ class MiniMindMHCConfig(MiniMindConfig):
         self.hc_balm_delta = hc_balm_delta
         self.hc_balm_diag_cost = hc_balm_diag_cost
         self.hc_balm_offdiag_cost = hc_balm_offdiag_cost
+        self.hc_balm_l2_cost = hc_balm_l2_cost
 
 
 class MiniMindMHCBlock(nn.Module):
@@ -63,6 +65,7 @@ class MiniMindMHCBlock(nn.Module):
             config.hc_balm_delta,
             config.hc_balm_diag_cost,
             config.hc_balm_offdiag_cost,
+            config.hc_balm_l2_cost,
         )
         self.mlp_hc = HyperConnection(
             config.hc_mult,
@@ -76,6 +79,7 @@ class MiniMindMHCBlock(nn.Module):
             config.hc_balm_delta,
             config.hc_balm_diag_cost,
             config.hc_balm_offdiag_cost,
+            config.hc_balm_l2_cost,
         )
 
     def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None):
