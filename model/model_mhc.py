@@ -56,6 +56,7 @@ class HyperConnection(nn.Module):
         hc_projector: str = "sinkhorn",
         hc_balm_r: float = 1.0,
         hc_balm_delta: float = 1e-6,
+        hc_balm_diag_cost: float = 0.0,
     ):
         super().__init__()
         self.hc_mult = hc_mult
@@ -66,12 +67,15 @@ class HyperConnection(nn.Module):
         self.hc_projector = hc_projector.lower()
         self.hc_balm_r = hc_balm_r
         self.hc_balm_delta = hc_balm_delta
+        self.hc_balm_diag_cost = hc_balm_diag_cost
         if self.hc_projector not in {"sinkhorn", "balm"}:
             raise ValueError(f"Unsupported hc_projector={hc_projector!r}. Expected 'sinkhorn' or 'balm'.")
         if self.hc_balm_r <= 0:
             raise ValueError(f"hc_balm_r must be positive, got {self.hc_balm_r}")
         if self.hc_balm_delta <= 0:
             raise ValueError(f"hc_balm_delta must be positive, got {self.hc_balm_delta}")
+        if self.hc_balm_diag_cost < 0:
+            raise ValueError(f"hc_balm_diag_cost must be non-negative, got {self.hc_balm_diag_cost}")
         self.input_norm = UnweightedRMSNorm(rms_norm_eps)
         mix = (2 + self.hc_mult) * self.hc_mult
         self.fn = nn.Parameter(torch.empty(mix, self.hc_mult * self.hidden_size))
@@ -117,13 +121,16 @@ class HyperConnection(nn.Module):
         elif self.hc_projector == "balm":
             # Balanced ALM projection with assignment-structured operators:
             # Ah = [row_sum(H); col_sum(H)], (A^T y)_ij = u_i + v_j.
+            # Optional linear cost: <C, H> with C = lambda * I.
             hc = self.hc_mult
             u = torch.zeros(*comb.shape[:-2], hc, device=comb.device, dtype=comb.dtype)
             v = torch.zeros(*comb.shape[:-2], hc, device=comb.device, dtype=comb.dtype)
+            eye = torch.eye(hc, device=comb.device, dtype=comb.dtype)
             balm_step = self.hc_balm_r / (float(hc) + float(self.hc_balm_delta))
             z_denom = 2.0 * float(hc) + float(self.hc_balm_delta)
             for _ in range(self.hc_iters):
-                q = comb + (u.unsqueeze(-1) + v.unsqueeze(-2)) / self.hc_balm_r
+                linear_cost = self.hc_balm_diag_cost * eye
+                q = comb + (u.unsqueeze(-1) + v.unsqueeze(-2) - linear_cost) / self.hc_balm_r
                 comb_next = torch.clamp(q, min=0.0)
                 residual = 2.0 * comb_next - comb
                 row_sum = residual.sum(dim=-1)

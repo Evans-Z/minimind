@@ -27,6 +27,7 @@ class MiniMindMHCConfig(MiniMindConfig):
         hc_projector="sinkhorn",
         hc_balm_r=1.0,
         hc_balm_delta=1e-6,
+        hc_balm_diag_cost=0.0,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -37,6 +38,7 @@ class MiniMindMHCConfig(MiniMindConfig):
         self.hc_projector = hc_projector
         self.hc_balm_r = hc_balm_r
         self.hc_balm_delta = hc_balm_delta
+        self.hc_balm_diag_cost = hc_balm_diag_cost
 
 
 class MiniMindMHCBlock(nn.Module):
@@ -57,6 +59,7 @@ class MiniMindMHCBlock(nn.Module):
             config.hc_projector,
             config.hc_balm_r,
             config.hc_balm_delta,
+            config.hc_balm_diag_cost,
         )
         self.mlp_hc = HyperConnection(
             config.hc_mult,
@@ -68,6 +71,7 @@ class MiniMindMHCBlock(nn.Module):
             config.hc_projector,
             config.hc_balm_r,
             config.hc_balm_delta,
+            config.hc_balm_diag_cost,
         )
 
     def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None):
