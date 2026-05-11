@@ -119,17 +119,18 @@ class HyperConnection(nn.Module):
             init.normal_(self.cost_fn, mean=0.0, std=self.initializer_range)
             init.zeros_(self.cost_base)
         if hasattr(self, "cost_static"):
-            hc = self.hc_mult
-            # Initialize learned_static cost directly from the fixed prior:
-            # diag = hc_balm_diag_cost, offdiag = hc_balm_offdiag_cost.
-            target = torch.full(
-                (hc, hc),
-                self.hc_balm_offdiag_cost,
-                device=self.cost_static.device,
-                dtype=self.cost_static.dtype,
-            )
-            target.fill_diagonal_(self.hc_balm_diag_cost)
-            self.cost_static.copy_(torch.clamp(target, min=0.0))
+            # hc = self.hc_mult
+            # # Initialize learned_static cost directly from the fixed prior:
+            # # diag = hc_balm_diag_cost, offdiag = hc_balm_offdiag_cost.
+            # target = torch.full(
+            #     (hc, hc),
+            #     self.hc_balm_offdiag_cost,
+            #     device=self.cost_static.device,
+            #     dtype=self.cost_static.dtype,
+            # )
+            # target.fill_diagonal_(self.hc_balm_diag_cost)
+            # self.cost_static.copy_(torch.clamp(target, min=0.0))
+            init.normal_(self.cost_static, mean=0.0, std=self.initializer_range)
 
     def forward(self, hidden_streams: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         r"""
