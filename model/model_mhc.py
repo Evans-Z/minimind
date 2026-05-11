@@ -119,7 +119,17 @@ class HyperConnection(nn.Module):
             init.normal_(self.cost_fn, mean=0.0, std=self.initializer_range)
             init.zeros_(self.cost_base)
         if hasattr(self, "cost_static"):
-            init.zeros_(self.cost_static)
+            hc = self.hc_mult
+            # Initialize learned_static cost directly from the fixed prior:
+            # diag = hc_balm_diag_cost, offdiag = hc_balm_offdiag_cost.
+            target = torch.full(
+                (hc, hc),
+                self.hc_balm_offdiag_cost,
+                device=self.cost_static.device,
+                dtype=self.cost_static.dtype,
+            )
+            target.fill_diagonal_(self.hc_balm_diag_cost)
+            self.cost_static.copy_(torch.clamp(target, min=0.0))
 
     def forward(self, hidden_streams: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         r"""
@@ -157,11 +167,11 @@ class HyperConnection(nn.Module):
             if self.hc_balm_cost_mode == "learned":
                 cost_logits = F.linear(flat, self.cost_fn.float(), self.cost_base.float())
                 linear_cost = (
-                    F.softplus(cost_logits).view(*mix.shape[:-1], hc, hc) + self.hc_eps
+                    F.relu(cost_logits).view(*mix.shape[:-1], hc, hc) + self.hc_eps
                 ) * self.hc_balm_cost_scale
             elif self.hc_balm_cost_mode == "learned_static":
                 linear_cost = (
-                    F.softplus(self.cost_static.float()).view(1, 1, hc, hc) + self.hc_eps
+                    F.relu(self.cost_static.float()).view(1, 1, hc, hc) + self.hc_eps
                 ) * self.hc_balm_cost_scale
             else:
                 ones = torch.ones(hc, hc, device=comb.device, dtype=comb.dtype)
