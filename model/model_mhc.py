@@ -78,9 +78,9 @@ class HyperConnection(nn.Module):
         self.hc_balm_cost_scale = hc_balm_cost_scale
         if self.hc_projector not in {"sinkhorn", "balm"}:
             raise ValueError(f"Unsupported hc_projector={hc_projector!r}. Expected 'sinkhorn' or 'balm'.")
-        if self.hc_balm_cost_mode not in {"fixed", "learned"}:
+        if self.hc_balm_cost_mode not in {"fixed", "learned", "learned_static"}:
             raise ValueError(
-                f"Unsupported hc_balm_cost_mode={hc_balm_cost_mode!r}. Expected 'fixed' or 'learned'."
+                f"Unsupported hc_balm_cost_mode={hc_balm_cost_mode!r}. Expected 'fixed', 'learned', or 'learned_static'."
             )
         if self.hc_balm_r <= 0:
             raise ValueError(f"hc_balm_r must be positive, got {self.hc_balm_r}")
@@ -106,6 +106,8 @@ class HyperConnection(nn.Module):
         if self.hc_balm_cost_mode == "learned":
             self.cost_fn = nn.Parameter(torch.empty(self.hc_mult * self.hc_mult, self.hc_mult * self.hidden_size))
             self.cost_base = nn.Parameter(torch.empty(self.hc_mult * self.hc_mult))
+        elif self.hc_balm_cost_mode == "learned_static":
+            self.cost_static = nn.Parameter(torch.empty(self.hc_mult, self.hc_mult))
         self.init_weights()
 
     @torch.no_grad()
@@ -116,6 +118,8 @@ class HyperConnection(nn.Module):
         if hasattr(self, "cost_fn"):
             init.normal_(self.cost_fn, mean=0.0, std=self.initializer_range)
             init.zeros_(self.cost_base)
+        if hasattr(self, "cost_static"):
+            init.zeros_(self.cost_static)
 
     def forward(self, hidden_streams: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         r"""
@@ -154,6 +158,10 @@ class HyperConnection(nn.Module):
                 cost_logits = F.linear(flat, self.cost_fn.float(), self.cost_base.float())
                 linear_cost = (
                     F.softplus(cost_logits).view(*mix.shape[:-1], hc, hc) + self.hc_eps
+                ) * self.hc_balm_cost_scale
+            elif self.hc_balm_cost_mode == "learned_static":
+                linear_cost = (
+                    F.softplus(self.cost_static.float()).view(1, 1, hc, hc) + self.hc_eps
                 ) * self.hc_balm_cost_scale
             else:
                 ones = torch.ones(hc, hc, device=comb.device, dtype=comb.dtype)

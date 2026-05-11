@@ -137,7 +137,13 @@ if __name__ == "__main__":
     parser.add_argument('--hc_balm_diag_cost', default=0.0, type=float, help="BALM线性代价系数lambda，对角代价矩阵C=lambda*I")
     parser.add_argument('--hc_balm_offdiag_cost', default=0.0, type=float, help="BALM线性代价系数，非对角项代价")
     parser.add_argument('--hc_balm_l2_cost', default=0.0, type=float, help="BALM二次代价系数lambda，对应 (lambda/2)*||H||_F^2")
-    parser.add_argument('--hc_balm_cost_mode', default='fixed', type=str, choices=['fixed', 'learned'], help="BALM代价模式：fixed或learned")
+    parser.add_argument(
+        '--hc_balm_cost_mode',
+        default='fixed',
+        type=str,
+        choices=['fixed', 'learned', 'learned_static'],
+        help="BALM代价模式：fixed（固定）、learned（依赖hidden states）、learned_static（全局可学习）",
+    )
     parser.add_argument('--hc_balm_cost_scale', default=1.0, type=float, help="BALM代价缩放系数")
     parser.add_argument("--data_path", type=str, default="../dataset/pretrain_t2t_mini.jsonl", help="预训练数据路径")
     parser.add_argument('--from_weight', default='none', type=str, help="基于哪个权重训练，为none则从头开始")
