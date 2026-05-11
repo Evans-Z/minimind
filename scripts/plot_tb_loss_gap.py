@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plot TensorBoard scalar gaps against a baseline run.
 
-Example:
+Examples:
     python scripts/plot_tb_loss_gap.py \
       --tb-root ../runs/pretrain \
       --baseline "baseline/*" \
@@ -9,9 +9,10 @@ Example:
       --compare "use_hc/*" \
       --compare "use_mhc/*" \
       --compare-label "HC" \
-      --compare-label "mHC" \
+      --compare-label '$m$HC' \
       --scalar-tag train/loss \
-      --title "(a) Absolute Training Loss Gap $vs.$ Training Steps" \
+      --y-min -0.06 \
+      --save-pdf \
       --output model/loss_gap.png
 """
 
@@ -155,8 +156,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--title",
         type=str,
-        default="(a) Absolute Training Loss Gap $vs.$ Training Steps",
-        help="Figure title.",
+        default="",
+        help="Figure title. Leave empty to omit title.",
     )
     parser.add_argument("--xlabel", type=str, default="Steps", help="X-axis label.")
     parser.add_argument(
@@ -167,6 +168,17 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="model/loss_gap_vs_steps.png",
         help="Output figure path.",
+    )
+    parser.add_argument(
+        "--save-pdf",
+        action="store_true",
+        help="Also save a PDF version (good for LaTeX).",
+    )
+    parser.add_argument(
+        "--pdf-output",
+        type=str,
+        default="",
+        help="Optional explicit PDF path. Defaults to output path with .pdf suffix.",
     )
     parser.add_argument("--dpi", type=int, default=180, help="Output DPI.")
     parser.add_argument(
@@ -257,7 +269,8 @@ def main() -> None:
 
     ax.set_xlabel(args.xlabel)
     ax.set_ylabel(args.ylabel)
-    ax.set_title(args.title)
+    if args.title.strip():
+        ax.set_title(args.title)
     if args.y_min is not None or args.y_max is not None:
         ax.set_ylim(args.y_min, args.y_max)
     if args.x_max is not None:
@@ -269,9 +282,20 @@ def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
     fig.savefig(out_path, dpi=args.dpi)
+    pdf_path = None
+    if args.save_pdf:
+        if args.pdf_output.strip():
+            pdf_path = Path(args.pdf_output).expanduser().resolve()
+        else:
+            pdf_path = out_path.with_suffix(".pdf")
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        # Keep vector text/curves for high-quality LaTeX inclusion.
+        fig.savefig(pdf_path)
     plt.close(fig)
 
     print(f"Saved figure to: {out_path}")
+    if pdf_path is not None:
+        print(f"Saved PDF to   : {pdf_path}")
     print(f"Baseline run : {baseline_run}")
     for run_dir, label in zip(compare_runs, compare_labels):
         print(f"Compare run  : {run_dir} (label={label})")
