@@ -11,6 +11,9 @@ Examples:
       --compare-label "HC" \
       --compare-label '$m$HC' \
       --scalar-tag train/loss \
+      --smooth-method ema \
+      --ema-alpha 0.03 \
+      --smooth-on gap \
       --y-min -0.06 \
       --save-pdf \
       --output model/loss_gap.png
@@ -83,6 +86,31 @@ def _moving_average(values: np.ndarray, window: int) -> np.ndarray:
         return values
     kernel = np.ones(window, dtype=np.float64) / float(window)
     return np.convolve(values, kernel, mode="same")
+
+
+def _ema(values: np.ndarray, alpha: float) -> np.ndarray:
+    """Exponential moving average."""
+    if len(values) == 0:
+        return values
+    if alpha <= 0.0 or alpha > 1.0:
+        raise ValueError(f"ema alpha must be in (0, 1], got {alpha}")
+    smoothed = np.empty_like(values, dtype=np.float64)
+    smoothed[0] = values[0]
+    for i in range(1, len(values)):
+        smoothed[i] = alpha * values[i] + (1.0 - alpha) * smoothed[i - 1]
+    return smoothed
+
+
+def _smooth_values(
+    values: np.ndarray, method: str, window: int, ema_alpha: float
+) -> np.ndarray:
+    if method == "none":
+        return values
+    if method == "moving_average":
+        return _moving_average(values, window)
+    if method == "ema":
+        return _ema(values, ema_alpha)
+    raise ValueError(f"Unknown smooth method: {method}")
 
 
 def _interp_to_steps(source: ScalarSeries, target_steps: np.ndarray) -> np.ndarray:
@@ -185,7 +213,27 @@ def parse_args() -> argparse.Namespace:
         "--smooth-window",
         type=int,
         default=1,
-        help="Moving average window for smoothing (1 disables smoothing).",
+        help="Moving-average window size (used when --smooth-method=moving_average).",
+    )
+    parser.add_argument(
+        "--smooth-method",
+        type=str,
+        default="none",
+        choices=["none", "moving_average", "ema"],
+        help="Smoothing method for trend visualization.",
+    )
+    parser.add_argument(
+        "--smooth-on",
+        type=str,
+        default="gap",
+        choices=["series", "gap"],
+        help="Apply smoothing on each raw series or on the final gap curve.",
+    )
+    parser.add_argument(
+        "--ema-alpha",
+        type=float,
+        default=0.05,
+        help="EMA alpha in (0,1]; smaller means smoother trend.",
     )
     parser.add_argument(
         "--x-max",
@@ -245,7 +293,11 @@ def main() -> None:
     if len(baseline_series.steps) == 0:
         raise ValueError("Baseline series is empty after filtering.")
 
-    baseline_values = _moving_average(baseline_series.values, args.smooth_window)
+    baseline_values = baseline_series.values
+    if args.smooth_on == "series":
+        baseline_values = _smooth_values(
+            baseline_values, args.smooth_method, args.smooth_window, args.ema_alpha
+        )
     steps = baseline_series.steps
 
     plt.style.use("seaborn-v0_8-whitegrid")
@@ -263,8 +315,13 @@ def main() -> None:
                 values=compare_series.values[keep_mask],
             )
         compare_interp = _interp_to_steps(compare_series, steps)
-        compare_interp = _moving_average(compare_interp, args.smooth_window)
+        if args.smooth_on == "series":
+            compare_interp = _smooth_values(
+                compare_interp, args.smooth_method, args.smooth_window, args.ema_alpha
+            )
         gap = compare_interp - baseline_values
+        if args.smooth_on == "gap":
+            gap = _smooth_values(gap, args.smooth_method, args.smooth_window, args.ema_alpha)
         ax.plot(steps, gap, linewidth=2.2, label=label, alpha=args.alpha)
 
     ax.set_xlabel(args.xlabel)
