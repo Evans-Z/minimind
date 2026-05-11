@@ -59,6 +59,8 @@ class HyperConnection(nn.Module):
         hc_balm_diag_cost: float = 0.0,
         hc_balm_offdiag_cost: float = 0.0,
         hc_balm_l2_cost: float = 0.0,
+        hc_balm_cost_mode: str = "fixed",
+        hc_balm_cost_scale: float = 1.0,
     ):
         super().__init__()
         self.hc_mult = hc_mult
@@ -72,8 +74,14 @@ class HyperConnection(nn.Module):
         self.hc_balm_diag_cost = hc_balm_diag_cost
         self.hc_balm_offdiag_cost = hc_balm_offdiag_cost
         self.hc_balm_l2_cost = hc_balm_l2_cost
+        self.hc_balm_cost_mode = hc_balm_cost_mode.lower()
+        self.hc_balm_cost_scale = hc_balm_cost_scale
         if self.hc_projector not in {"sinkhorn", "balm"}:
             raise ValueError(f"Unsupported hc_projector={hc_projector!r}. Expected 'sinkhorn' or 'balm'.")
+        if self.hc_balm_cost_mode not in {"fixed", "learned"}:
+            raise ValueError(
+                f"Unsupported hc_balm_cost_mode={hc_balm_cost_mode!r}. Expected 'fixed' or 'learned'."
+            )
         if self.hc_balm_r <= 0:
             raise ValueError(f"hc_balm_r must be positive, got {self.hc_balm_r}")
         if self.hc_balm_delta <= 0:
@@ -84,6 +92,8 @@ class HyperConnection(nn.Module):
             raise ValueError(f"hc_balm_offdiag_cost must be non-negative, got {self.hc_balm_offdiag_cost}")
         if self.hc_balm_l2_cost < 0:
             raise ValueError(f"hc_balm_l2_cost must be non-negative, got {self.hc_balm_l2_cost}")
+        if self.hc_balm_cost_scale < 0:
+            raise ValueError(f"hc_balm_cost_scale must be non-negative, got {self.hc_balm_cost_scale}")
         self.input_norm = UnweightedRMSNorm(rms_norm_eps)
         mix = (2 + self.hc_mult) * self.hc_mult
         self.fn = nn.Parameter(torch.empty(mix, self.hc_mult * self.hidden_size))
@@ -93,6 +103,9 @@ class HyperConnection(nn.Module):
         # H×H residual combine matrix that gets Sinkhorn-projected onto the
         # doubly-stochastic manifold). Each output gets its own learned scale.
         self.scale = nn.Parameter(torch.empty(3))
+        if self.hc_balm_cost_mode == "learned":
+            self.cost_fn = nn.Parameter(torch.empty(self.hc_mult * self.hc_mult, self.hc_mult * self.hidden_size))
+            self.cost_base = nn.Parameter(torch.empty(self.hc_mult * self.hc_mult))
         self.init_weights()
 
     @torch.no_grad()
@@ -100,6 +113,9 @@ class HyperConnection(nn.Module):
         init.normal_(self.fn, mean=0.0, std=self.initializer_range)
         init.zeros_(self.base)
         init.ones_(self.scale)
+        if hasattr(self, "cost_fn"):
+            init.normal_(self.cost_fn, mean=0.0, std=self.initializer_range)
+            init.zeros_(self.cost_base)
 
     def forward(self, hidden_streams: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         r"""
@@ -134,15 +150,22 @@ class HyperConnection(nn.Module):
             hc = self.hc_mult
             u = torch.zeros(*comb.shape[:-2], hc, device=comb.device, dtype=comb.dtype)
             v = torch.zeros(*comb.shape[:-2], hc, device=comb.device, dtype=comb.dtype)
-            ones = torch.ones(hc, hc, device=comb.device, dtype=comb.dtype)
-            eye = torch.eye(hc, device=comb.device, dtype=comb.dtype)
+            if self.hc_balm_cost_mode == "learned":
+                cost_logits = F.linear(flat, self.cost_fn.float(), self.cost_base.float())
+                linear_cost = (
+                    F.softplus(cost_logits).view(*mix.shape[:-1], hc, hc) + self.hc_eps
+                ) * self.hc_balm_cost_scale
+            else:
+                ones = torch.ones(hc, hc, device=comb.device, dtype=comb.dtype)
+                eye = torch.eye(hc, device=comb.device, dtype=comb.dtype)
+                # C = offdiag * 1 + (diag - offdiag) * I
+                linear_cost = (
+                    self.hc_balm_offdiag_cost * ones
+                    + (self.hc_balm_diag_cost - self.hc_balm_offdiag_cost) * eye
+                ) * self.hc_balm_cost_scale
             balm_step = self.hc_balm_r / (float(hc) + float(self.hc_balm_delta))
             z_denom = 2.0 * float(hc) + float(self.hc_balm_delta)
             for _ in range(self.hc_iters):
-                # C = offdiag * 1 + (diag - offdiag) * I
-                linear_cost = self.hc_balm_offdiag_cost * ones + (
-                    self.hc_balm_diag_cost - self.hc_balm_offdiag_cost
-                ) * eye
                 at_y = u.unsqueeze(-1) + v.unsqueeze(-2)
                 if self.hc_balm_l2_cost > 0:
                     q = (
