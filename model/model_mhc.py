@@ -45,6 +45,20 @@ class HyperConnection(nn.Module):
                                                                                             comb
                                                                                             (stream mixer)
     """
+    def _validate_config(self):
+        if self.hc_projector not in {"sinkhorn", "balm"}:
+            raise ValueError(f"Unsupported hc_projector={self.hc_projector!r}. Expected 'sinkhorn' or 'balm'.")
+        if self.hc_balm_r <= 0:
+            raise ValueError(f"hc_balm_r must be positive, got {self.hc_balm_r}")
+        if self.hc_balm_delta <= 0:
+            raise ValueError(f"hc_balm_delta must be positive, got {self.hc_balm_delta}")
+        if self.hc_balm_diag_cost < 0:
+            raise ValueError(f"hc_balm_diag_cost must be non-negative, got {self.hc_balm_diag_cost}")
+        if self.hc_balm_offdiag_cost < 0:
+            raise ValueError(f"hc_balm_offdiag_cost must be non-negative, got {self.hc_balm_offdiag_cost}")
+        if self.hc_balm_cost_scale < 0:
+            raise ValueError(f"hc_balm_cost_scale must be non-negative, got {self.hc_balm_cost_scale}")
+
     def __init__(
         self,
         hc_mult: int,
@@ -58,9 +72,8 @@ class HyperConnection(nn.Module):
         hc_balm_delta: float = 1e-6,
         hc_balm_diag_cost: float = 0.0,
         hc_balm_offdiag_cost: float = 0.0,
-        hc_balm_l2_cost: float = 0.0,
-        hc_balm_cost_mode: str = "fixed",
         hc_balm_cost_scale: float = 1.0,
+        hc_balm_trainable_r: bool = False,
     ):
         super().__init__()
         self.hc_mult = hc_mult
@@ -73,27 +86,19 @@ class HyperConnection(nn.Module):
         self.hc_balm_delta = hc_balm_delta
         self.hc_balm_diag_cost = hc_balm_diag_cost
         self.hc_balm_offdiag_cost = hc_balm_offdiag_cost
-        self.hc_balm_l2_cost = hc_balm_l2_cost
-        self.hc_balm_cost_mode = hc_balm_cost_mode.lower()
         self.hc_balm_cost_scale = hc_balm_cost_scale
-        if self.hc_projector not in {"sinkhorn", "balm"}:
-            raise ValueError(f"Unsupported hc_projector={hc_projector!r}. Expected 'sinkhorn' or 'balm'.")
-        if self.hc_balm_cost_mode not in {"fixed", "learned", "learned_static"}:
-            raise ValueError(
-                f"Unsupported hc_balm_cost_mode={hc_balm_cost_mode!r}. Expected 'fixed', 'learned', or 'learned_static'."
-            )
-        if self.hc_balm_r <= 0:
-            raise ValueError(f"hc_balm_r must be positive, got {self.hc_balm_r}")
-        if self.hc_balm_delta <= 0:
-            raise ValueError(f"hc_balm_delta must be positive, got {self.hc_balm_delta}")
-        if self.hc_balm_diag_cost < 0:
-            raise ValueError(f"hc_balm_diag_cost must be non-negative, got {self.hc_balm_diag_cost}")
-        if self.hc_balm_offdiag_cost < 0:
-            raise ValueError(f"hc_balm_offdiag_cost must be non-negative, got {self.hc_balm_offdiag_cost}")
-        if self.hc_balm_l2_cost < 0:
-            raise ValueError(f"hc_balm_l2_cost must be non-negative, got {self.hc_balm_l2_cost}")
-        if self.hc_balm_cost_scale < 0:
-            raise ValueError(f"hc_balm_cost_scale must be non-negative, got {self.hc_balm_cost_scale}")
+        self.hc_balm_trainable_r = hc_balm_trainable_r
+        self._validate_config()
+
+        # projector setup
+        if self.hc_projector == "sinkhorn":
+            self._setup_sinkhorn()
+        elif self.hc_projector == "balm":
+            self._setup_balm()
+        else:
+            raise NotImplementedError(f"Unsupported hc_projector={self.hc_projector!r}")
+        
+        # weights of mHC
         self.input_norm = UnweightedRMSNorm(rms_norm_eps)
         mix = (2 + self.hc_mult) * self.hc_mult
         self.fn = nn.Parameter(torch.empty(mix, self.hc_mult * self.hidden_size))
@@ -103,29 +108,73 @@ class HyperConnection(nn.Module):
         # H×H residual combine matrix that gets Sinkhorn-projected onto the
         # doubly-stochastic manifold). Each output gets its own learned scale.
         self.scale = nn.Parameter(torch.empty(3))
-        if self.hc_balm_cost_mode == "learned":
-            self.cost_fn = nn.Parameter(torch.empty(self.hc_mult * self.hc_mult, self.hc_mult * self.hidden_size))
-            self.cost_base = nn.Parameter(torch.empty(self.hc_mult * self.hc_mult))
-        elif self.hc_balm_cost_mode == "learned_static":
-            self.cost_static = nn.Parameter(torch.empty(self.hc_mult, self.hc_mult))
-        # Cached fixed BALM linear cost (avoid per-forward construction).
-        fixed_cost = (
+        
+        self.init_weights()
+    
+    def _setup_sinkhorn(self):
+        self._project_comb = self._project_comb_sinkhorn
+
+    def _setup_balm(self):
+        self._project_comb = self._project_comb_balm
+        if self.hc_balm_trainable_r:
+            # raw_r is unconstrained; softplus(raw_r) + hc_eps keeps r strictly positive.
+            target_r = max(self.hc_balm_r - self.hc_eps, 1e-12)
+            raw_init = torch.log(torch.expm1(torch.tensor(target_r, dtype=torch.float32)))
+            self.hc_balm_raw_r = nn.Parameter(raw_init)
+        else:
+            self.hc_balm_raw_r = None
+        # Balanced ALM constants: 1/(2n+delta), linear cost matrix
+        self.inv_z_denom = 1.0 / (2.0 * self.hc_mult + self.hc_balm_delta)
+        self.linear_cost = (
             self.hc_balm_offdiag_cost * torch.ones(self.hc_mult, self.hc_mult)
             + (self.hc_balm_diag_cost - self.hc_balm_offdiag_cost) * torch.eye(self.hc_mult)
         ) * self.hc_balm_cost_scale
-        self.register_buffer("_hc_fixed_linear_cost", fixed_cost, persistent=False)
-        self.init_weights()
+
+    def _get_hc_balm_r(self, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
+        if self.hc_balm_trainable_r:
+            return F.softplus(self.hc_balm_raw_r.to(device=device, dtype=dtype)) + self.hc_eps
+        return torch.tensor(self.hc_balm_r, device=device, dtype=dtype)
 
     @torch.no_grad()
     def init_weights(self):
         init.normal_(self.fn, mean=0.0, std=self.initializer_range)
         init.zeros_(self.base)
         init.ones_(self.scale)
-        if hasattr(self, "cost_fn"):
-            init.normal_(self.cost_fn, mean=0.0, std=self.initializer_range)
-            init.zeros_(self.cost_base)
-        if hasattr(self, "cost_static"):
-            init.normal_(self.cost_static, mean=0.0, std=self.initializer_range)
+
+    def _project_comb_sinkhorn(self, comb: torch.Tensor) -> torch.Tensor:
+        for _ in range(self.hc_iters):
+            comb = comb / (comb.sum(dim=-1, keepdim=True) + self.hc_eps)
+            comb = comb / (comb.sum(dim=-2, keepdim=True) + self.hc_eps)
+        return comb
+
+    def _project_comb_balm(self, comb: torch.Tensor) -> torch.Tensor:
+        hc = self.hc_mult
+        linear_cost = self.linear_cost.to(device=comb.device, dtype=comb.dtype)
+        hc_balm_r = self._get_hc_balm_r(dtype=comb.dtype, device=comb.device)
+        balm_step = hc_balm_r / (self.hc_mult + self.hc_balm_delta)
+        inv_r = 1.0 / hc_balm_r
+        y = torch.zeros(*comb.shape[:-2], 2 * hc, device=comb.device, dtype=comb.dtype)
+        comb_row_sum = comb.sum(dim=-1)
+        comb_col_sum = comb.sum(dim=-2)
+        for _ in range(self.hc_iters):
+            u = y[..., :hc]
+            v = y[..., hc:]
+            at_y = u.unsqueeze(-1) + v.unsqueeze(-2)
+            q = comb + (at_y - linear_cost) * inv_r
+            comb_next = torch.clamp(q, min=0.0)
+            comb_next_row_sum = comb_next.sum(dim=-1)
+            comb_next_col_sum = comb_next.sum(dim=-2)
+            row_sum = 2.0 * comb_next_row_sum - comb_row_sum
+            col_sum = 2.0 * comb_next_col_sum - comb_col_sum
+            z = (row_sum.sum(dim=-1) - hc) * self.inv_z_denom
+            z_expand = z.unsqueeze(-1)
+            y[..., :hc].sub_(balm_step * (row_sum - 1.0 - z_expand))
+            y[..., hc:].sub_(balm_step * (col_sum - 1.0 - z_expand))
+            comb = comb_next
+            comb_row_sum = comb_next_row_sum
+            comb_col_sum = comb_next_col_sum
+        
+        return comb
 
     def forward(self, hidden_streams: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         r"""
@@ -148,57 +197,7 @@ class HyperConnection(nn.Module):
             )
             + self.hc_eps
         )
-        if self.hc_projector == "sinkhorn":
-            for _ in range(self.hc_iters):
-                comb = comb / (comb.sum(dim=-1, keepdim=True) + self.hc_eps)
-                comb = comb / (comb.sum(dim=-2, keepdim=True) + self.hc_eps)
-        elif self.hc_projector == "balm":
-            if self.hc_balm_cost_mode == "learned":
-                cost_logits = F.linear(flat, self.cost_fn.float(), self.cost_base.float())
-                linear_cost = (
-                    F.relu(cost_logits).view(*mix.shape[:-1], hc, hc) + self.hc_eps
-                ) * self.hc_balm_cost_scale
-            elif self.hc_balm_cost_mode == "learned_static":
-                linear_cost = (
-                    F.relu(self.cost_static.float()).view(1, 1, hc, hc) + self.hc_eps
-                ) * self.hc_balm_cost_scale
-            else:
-                linear_cost = self._hc_fixed_linear_cost.to(device=comb.device, dtype=comb.dtype)
-            
-            # fixed-parameters
-            balm_step = self.hc_balm_r / (hc + self.hc_balm_delta)
-            inv_z_denom = 1.0 / (2.0 * hc + self.hc_balm_delta)
-            use_l2 = self.hc_balm_l2_cost > 0
-            inv_r = 1.0 / self.hc_balm_r
-            if use_l2:
-                inv_r_plus_l2 = 1.0 / (self.hc_balm_r + self.hc_balm_l2_cost)
-            
-            # iterations
-            y = torch.zeros(*comb.shape[:-2], 2 * hc, device=comb.device, dtype=comb.dtype)
-            comb_row_sum = comb.sum(dim=-1)
-            comb_col_sum = comb.sum(dim=-2)
-            for _ in range(self.hc_iters):
-                u = y[..., :hc]
-                v = y[..., hc:]
-                at_y = u.unsqueeze(-1) + v.unsqueeze(-2)
-                if use_l2:
-                    q = (self.hc_balm_r * comb + at_y - linear_cost) * inv_r_plus_l2
-                else:
-                    q = comb + (at_y - linear_cost) * inv_r
-                comb_next = torch.clamp(q, min=0.0)
-                comb_next_row_sum = comb_next.sum(dim=-1)
-                comb_next_col_sum = comb_next.sum(dim=-2)
-                row_sum = 2.0 * comb_next_row_sum - comb_row_sum
-                col_sum = 2.0 * comb_next_col_sum - comb_col_sum
-                z = (row_sum.sum(dim=-1) - hc) * inv_z_denom
-                z_expand = z.unsqueeze(-1)
-                y[..., :hc].sub_(balm_step * (row_sum - 1.0 - z_expand))
-                y[..., hc:].sub_(balm_step * (col_sum - 1.0 - z_expand))
-                comb = comb_next
-                comb_row_sum = comb_next_row_sum
-                comb_col_sum = comb_next_col_sum
-        else:
-            raise NotImplementedError(f"Unsupported hc_projector={self.hc_projector!r}")
+        comb = self._project_comb(comb)
         # Collapse the `hc_mult` parallel streams down to a single sequence using
         # the `pre` weights: one weighted sum across the stream axis, ready for
         # the sublayer (attn / MLP).

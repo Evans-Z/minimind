@@ -26,11 +26,10 @@ class MiniMindMHCConfig(MiniMindConfig):
         initializer_range=0.02,
         hc_projector="sinkhorn",
         hc_balm_r=1.0,
+        hc_balm_trainable_r=False,
         hc_balm_delta=1e-6,
         hc_balm_diag_cost=0.0,
         hc_balm_offdiag_cost=0.0,
-        hc_balm_l2_cost=0.0,
-        hc_balm_cost_mode="fixed",
         hc_balm_cost_scale=1.0,
         **kwargs,
     ):
@@ -41,11 +40,10 @@ class MiniMindMHCConfig(MiniMindConfig):
         self.initializer_range = initializer_range
         self.hc_projector = hc_projector
         self.hc_balm_r = hc_balm_r
+        self.hc_balm_trainable_r = hc_balm_trainable_r
         self.hc_balm_delta = hc_balm_delta
         self.hc_balm_diag_cost = hc_balm_diag_cost
         self.hc_balm_offdiag_cost = hc_balm_offdiag_cost
-        self.hc_balm_l2_cost = hc_balm_l2_cost
-        self.hc_balm_cost_mode = hc_balm_cost_mode
         self.hc_balm_cost_scale = hc_balm_cost_scale
 
 
@@ -66,11 +64,10 @@ class MiniMindMHCBlock(nn.Module):
             config.initializer_range,
             config.hc_projector,
             config.hc_balm_r,
+            config.hc_balm_trainable_r,
             config.hc_balm_delta,
             config.hc_balm_diag_cost,
             config.hc_balm_offdiag_cost,
-            config.hc_balm_l2_cost,
-            config.hc_balm_cost_mode,
             config.hc_balm_cost_scale,
         )
         self.mlp_hc = HyperConnection(
@@ -82,11 +79,10 @@ class MiniMindMHCBlock(nn.Module):
             config.initializer_range,
             config.hc_projector,
             config.hc_balm_r,
+            config.hc_balm_trainable_r,
             config.hc_balm_delta,
             config.hc_balm_diag_cost,
             config.hc_balm_offdiag_cost,
-            config.hc_balm_l2_cost,
-            config.hc_balm_cost_mode,
             config.hc_balm_cost_scale,
         )
 

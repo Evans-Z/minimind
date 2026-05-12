@@ -133,17 +133,16 @@ if __name__ == "__main__":
         help="mHC流混合矩阵投影器：sinkhorn或balm",
     )
     parser.add_argument('--hc_balm_r', default=1.0, type=float, help="BALM投影的惩罚系数r")
+    parser.add_argument(
+        '--hc_balm_trainable_r',
+        default=0,
+        type=int,
+        choices=[0, 1],
+        help="是否将BALM惩罚系数r设为可训练参数（0=否，1=是）",
+    )
     parser.add_argument('--hc_balm_delta', default=1e-6, type=float, help="BALM投影的数值稳定项delta")
     parser.add_argument('--hc_balm_diag_cost', default=0.0, type=float, help="BALM线性代价系数lambda，对角代价矩阵C=lambda*I")
     parser.add_argument('--hc_balm_offdiag_cost', default=0.0, type=float, help="BALM线性代价系数，非对角项代价")
-    parser.add_argument('--hc_balm_l2_cost', default=0.0, type=float, help="BALM二次代价系数lambda，对应 (lambda/2)*||H||_F^2")
-    parser.add_argument(
-        '--hc_balm_cost_mode',
-        default='fixed',
-        type=str,
-        choices=['fixed', 'learned', 'learned_static'],
-        help="BALM代价模式：fixed（固定）、learned（依赖hidden states）、learned_static（全局可学习）",
-    )
     parser.add_argument('--hc_balm_cost_scale', default=1.0, type=float, help="BALM代价缩放系数")
     parser.add_argument("--data_path", type=str, default="../dataset/pretrain_t2t_mini.jsonl", help="预训练数据路径")
     parser.add_argument('--from_weight', default='none', type=str, help="基于哪个权重训练，为none则从头开始")
@@ -177,11 +176,10 @@ if __name__ == "__main__":
             hc_eps=args.hc_eps,
             hc_projector=args.hc_projector,
             hc_balm_r=args.hc_balm_r,
+            hc_balm_trainable_r=bool(args.hc_balm_trainable_r),
             hc_balm_delta=args.hc_balm_delta,
             hc_balm_diag_cost=args.hc_balm_diag_cost,
             hc_balm_offdiag_cost=args.hc_balm_offdiag_cost,
-            hc_balm_l2_cost=args.hc_balm_l2_cost,
-            hc_balm_cost_mode=args.hc_balm_cost_mode,
             hc_balm_cost_scale=args.hc_balm_cost_scale,
         )
     else:
