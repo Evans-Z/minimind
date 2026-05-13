@@ -48,6 +48,10 @@ class HyperConnection(nn.Module):
     def _validate_config(self):
         if self.hc_projector not in {"sinkhorn", "balm"}:
             raise ValueError(f"Unsupported hc_projector={self.hc_projector!r}. Expected 'sinkhorn' or 'balm'.")
+        if self.hc_comb_activation not in {"sigmoid", "softmax"}:
+            raise ValueError(
+                f"Unsupported hc_comb_activation={self.hc_comb_activation!r}. Expected 'sigmoid' or 'softmax'."
+            )
         if self.hc_balm_r <= 0:
             raise ValueError(f"hc_balm_r must be positive, got {self.hc_balm_r}")
         if self.hc_balm_delta <= 0:
@@ -68,6 +72,7 @@ class HyperConnection(nn.Module):
         rms_norm_eps: float,
         initializer_range: float = 0.02,
         hc_projector: str = "sinkhorn",
+        hc_comb_activation: str = "sigmoid",
         hc_balm_r: float = 1.0,
         hc_balm_delta: float = 1e-6,
         hc_balm_diag_cost: float = 0.0,
@@ -82,6 +87,7 @@ class HyperConnection(nn.Module):
         self.hc_eps = hc_eps
         self.initializer_range = initializer_range
         self.hc_projector = hc_projector.lower()
+        self.hc_comb_activation = hc_comb_activation.lower()
         self.hc_balm_r = hc_balm_r
         self.hc_balm_delta = hc_balm_delta
         self.hc_balm_diag_cost = hc_balm_diag_cost
@@ -134,6 +140,11 @@ class HyperConnection(nn.Module):
         if self.hc_balm_trainable_r:
             return F.softplus(self.hc_balm_raw_r.to(device=device, dtype=dtype)) + self.hc_eps
         return torch.tensor(self.hc_balm_r, device=device, dtype=dtype)
+
+    def _activate_comb_logits(self, comb_logits: torch.Tensor) -> torch.Tensor:
+        if self.hc_comb_activation == "softmax":
+            return F.softmax(comb_logits, dim=-1) + self.hc_eps
+        return torch.sigmoid(comb_logits) + self.hc_eps
 
     @torch.no_grad()
     def init_weights(self):
@@ -191,12 +202,8 @@ class HyperConnection(nn.Module):
         hc = self.hc_mult
         pre = torch.sigmoid(mix[..., :hc] * pre_scale + self.base[:hc]) + self.hc_eps
         post = torch.sigmoid(mix[..., hc:2*hc] * post_scale + self.base[hc:2*hc]) + self.hc_eps
-        comb = (
-            torch.sigmoid(
-                mix[..., 2*hc:].view(*mix.shape[:-1], hc, hc) * comb_scale + self.base[2*hc:].view(hc, hc)
-            )
-            + self.hc_eps
-        )
+        comb_logits = mix[..., 2*hc:].view(*mix.shape[:-1], hc, hc) * comb_scale + self.base[2*hc:].view(hc, hc)
+        comb = self._activate_comb_logits(comb_logits)
         comb = self._project_comb(comb)
         # Collapse the `hc_mult` parallel streams down to a single sequence using
         # the `pre` weights: one weighted sum across the stream axis, ready for

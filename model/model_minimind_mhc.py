@@ -25,6 +25,7 @@ class MiniMindMHCConfig(MiniMindConfig):
         hc_eps=1e-6,
         initializer_range=0.02,
         hc_projector="sinkhorn",
+        hc_comb_activation="sigmoid",
         hc_balm_r=1.0,
         hc_balm_trainable_r=False,
         hc_balm_delta=1e-6,
@@ -39,6 +40,7 @@ class MiniMindMHCConfig(MiniMindConfig):
         self.hc_eps = hc_eps
         self.initializer_range = initializer_range
         self.hc_projector = hc_projector
+        self.hc_comb_activation = hc_comb_activation
         self.hc_balm_r = hc_balm_r
         self.hc_balm_trainable_r = hc_balm_trainable_r
         self.hc_balm_delta = hc_balm_delta
@@ -56,34 +58,36 @@ class MiniMindMHCBlock(nn.Module):
         self.mlp = FeedForward(config) if not config.use_moe else MOEFeedForward(config)
 
         self.attn_hc = HyperConnection(
-            config.hc_mult,
-            config.hidden_size,
-            config.hc_iters,
-            config.hc_eps,
-            config.rms_norm_eps,
-            config.initializer_range,
-            config.hc_projector,
-            config.hc_balm_r,
-            config.hc_balm_trainable_r,
-            config.hc_balm_delta,
-            config.hc_balm_diag_cost,
-            config.hc_balm_offdiag_cost,
-            config.hc_balm_cost_scale,
+            hc_mult=config.hc_mult,
+            hidden_size=config.hidden_size,
+            hc_iters=config.hc_iters,
+            hc_eps=config.hc_eps,
+            rms_norm_eps=config.rms_norm_eps,
+            initializer_range=config.initializer_range,
+            hc_projector=config.hc_projector,
+            hc_comb_activation=config.hc_comb_activation,
+            hc_balm_r=config.hc_balm_r,
+            hc_balm_delta=config.hc_balm_delta,
+            hc_balm_diag_cost=config.hc_balm_diag_cost,
+            hc_balm_offdiag_cost=config.hc_balm_offdiag_cost,
+            hc_balm_cost_scale=config.hc_balm_cost_scale,
+            hc_balm_trainable_r=config.hc_balm_trainable_r,
         )
         self.mlp_hc = HyperConnection(
-            config.hc_mult,
-            config.hidden_size,
-            config.hc_iters,
-            config.hc_eps,
-            config.rms_norm_eps,
-            config.initializer_range,
-            config.hc_projector,
-            config.hc_balm_r,
-            config.hc_balm_trainable_r,
-            config.hc_balm_delta,
-            config.hc_balm_diag_cost,
-            config.hc_balm_offdiag_cost,
-            config.hc_balm_cost_scale,
+            hc_mult=config.hc_mult,
+            hidden_size=config.hidden_size,
+            hc_iters=config.hc_iters,
+            hc_eps=config.hc_eps,
+            rms_norm_eps=config.rms_norm_eps,
+            initializer_range=config.initializer_range,
+            hc_projector=config.hc_projector,
+            hc_comb_activation=config.hc_comb_activation,
+            hc_balm_r=config.hc_balm_r,
+            hc_balm_delta=config.hc_balm_delta,
+            hc_balm_diag_cost=config.hc_balm_diag_cost,
+            hc_balm_offdiag_cost=config.hc_balm_offdiag_cost,
+            hc_balm_cost_scale=config.hc_balm_cost_scale,
+            hc_balm_trainable_r=config.hc_balm_trainable_r,
         )
 
     def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None):
