@@ -25,7 +25,6 @@ class MiniMindMHCConfig(MiniMindConfig):
         hc_eps=1e-6,
         initializer_range=0.02,
         hc_projector="sinkhorn",
-        hc_comb_activation="sigmoid",
         hc_balm_r=1.0,
         hc_balm_trainable_r=False,
         hc_balm_delta=1e-6,
@@ -40,7 +39,6 @@ class MiniMindMHCConfig(MiniMindConfig):
         self.hc_eps = hc_eps
         self.initializer_range = initializer_range
         self.hc_projector = hc_projector
-        self.hc_comb_activation = hc_comb_activation
         self.hc_balm_r = hc_balm_r
         self.hc_balm_trainable_r = hc_balm_trainable_r
         self.hc_balm_delta = hc_balm_delta
@@ -65,7 +63,6 @@ class MiniMindMHCBlock(nn.Module):
             rms_norm_eps=config.rms_norm_eps,
             initializer_range=config.initializer_range,
             hc_projector=config.hc_projector,
-            hc_comb_activation=config.hc_comb_activation,
             hc_balm_r=config.hc_balm_r,
             hc_balm_delta=config.hc_balm_delta,
             hc_balm_diag_cost=config.hc_balm_diag_cost,
@@ -81,7 +78,6 @@ class MiniMindMHCBlock(nn.Module):
             rms_norm_eps=config.rms_norm_eps,
             initializer_range=config.initializer_range,
             hc_projector=config.hc_projector,
-            hc_comb_activation=config.hc_comb_activation,
             hc_balm_r=config.hc_balm_r,
             hc_balm_delta=config.hc_balm_delta,
             hc_balm_diag_cost=config.hc_balm_diag_cost,

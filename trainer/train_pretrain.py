@@ -132,13 +132,6 @@ if __name__ == "__main__":
         choices=['sinkhorn', 'balm'],
         help="mHC流混合矩阵投影器：sinkhorn或balm",
     )
-    parser.add_argument(
-        '--hc_comb_activation',
-        default='sigmoid',
-        type=str,
-        choices=['sigmoid', 'softmax'],
-        help="mHC流混合矩阵comb激活函数：sigmoid或softmax",
-    )
     parser.add_argument('--hc_balm_r', default=1.0, type=float, help="BALM投影的惩罚系数r")
     parser.add_argument(
         '--hc_balm_trainable_r',
@@ -182,7 +175,6 @@ if __name__ == "__main__":
             hc_iters=args.hc_iters,
             hc_eps=args.hc_eps,
             hc_projector=args.hc_projector,
-            hc_comb_activation=args.hc_comb_activation,
             hc_balm_r=args.hc_balm_r,
             hc_balm_trainable_r=bool(args.hc_balm_trainable_r),
             hc_balm_delta=args.hc_balm_delta,
