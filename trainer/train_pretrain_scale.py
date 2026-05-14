@@ -68,6 +68,10 @@ model_config_overrides = {}
 
 def _agent_debug_log(hypothesis_id, location, message, data=None, run_id="pre-fix"):
     try:
+        log_path = os.environ.get(
+            "MINIMIND_DEBUG_LOG",
+            "/Users/phoenix/Works/projects/minimind/.cursor/debug-3ab59d.log",
+        )
         payload = {
             "sessionId": "3ab59d",
             "id": f"log_{int(time.time() * 1000)}_{os.getpid()}",
@@ -84,7 +88,8 @@ def _agent_debug_log(hypothesis_id, location, message, data=None, run_id="pre-fi
                 **(data or {}),
             },
         }
-        with open("/Users/phoenix/Works/projects/minimind/.cursor/debug-3ab59d.log", "a", encoding="utf-8") as f:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False) + "\n")
     except Exception:
         pass
