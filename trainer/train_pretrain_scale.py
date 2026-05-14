@@ -303,6 +303,7 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
                 tb_writer.add_scalar("train_by_tokens/aux_loss", current_aux_loss, global_tokens)
                 if last_grad_norm is not None:
                     tb_writer.add_scalar("train/grad_norm", last_grad_norm, global_step)
+                    tb_writer.add_scalar("train_by_tokens/grad_norm", last_grad_norm, global_tokens)
         elif step == start_step + 1:
             Logger(
                 f"Epoch:[{epoch + 1}/{args.epochs}] started, first step {step}/{iters}, "
