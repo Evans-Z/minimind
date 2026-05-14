@@ -1,0 +1,44 @@
+# Launcher-level training config for scripts/launch_pretrain_scale.sh
+# CLI flags override these values.
+
+presets:
+  yaml_path: configs/model_scale_presets.yaml
+  size_preset: dense_64m
+  context_preset: ctx_340
+
+launch:
+  backend: fsdp2
+  # Leave empty to auto-detect from CUDA_VISIBLE_DEVICES or GPU count.
+  nproc_per_node:
+  nnodes: 1
+  node_rank: 0
+  master_addr: 127.0.0.1
+  master_port: 29500
+  # Example: "0,1,2,3"
+  cuda_visible_devices:
+  dry_run: false
+
+run:
+  save_weight: pretrain_scale
+  save_dir: ../out
+  data_path: ../dataset/pretrain_t2t_mini.jsonl
+  tb_run_tag: ""
+  resume: false
+  use_wandb: false
+  use_tensorboard: true
+  use_compile: false
+
+# Arbitrary trainer/train_pretrain_scale.py arg overrides.
+# These are converted to CLI args as:
+#   key: value -> --key value
+#   key: true  -> --key
+train:
+  overrides:
+    # learning_rate: 5e-4
+    # batch_size: 32
+    # accumulation_steps: 8
+    # epochs: 2
+    # log_interval: 100
+    # save_interval: 1000
+    # dtype: bfloat16
+    # fsdp2_reshard_after_forward: 1
