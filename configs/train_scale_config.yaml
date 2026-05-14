@@ -21,9 +21,9 @@ launch:
 run:
   save_weight: pretrain_scale
   save_dir: /data/pengxiang/minimind/out
-  model_path: ../model
+  model_path: model
   data_path: /data/pengxiang/datasets/pretrain_t2t_mini.jsonl
-  tensorboard_logdir: ../runs/pretrain_scale
+  tensorboard_logdir: runs/pretrain_scale
   tb_run_tag: ""
   resume: false
   use_wandb: false

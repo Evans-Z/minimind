@@ -65,6 +65,26 @@ run_is_fsdp2 = False
 model_config_overrides = {}
 
 
+def _rank_prefix():
+    if not dist.is_initialized():
+        return "[single]"
+    return f"[rank {dist.get_rank()}/{dist.get_world_size()}]"
+
+
+def _rank_log(content: str, every_rank: bool = False):
+    if every_rank or is_main_process():
+        print(f"{_rank_prefix()} {content}", flush=True)
+
+
+def _distributed_barrier():
+    if not dist.is_initialized():
+        return
+    if dist.get_backend() == "nccl" and torch.cuda.is_available():
+        dist.barrier(device_ids=[torch.cuda.current_device()])
+    else:
+        dist.barrier()
+
+
 def _apply_fsdp2_sharding(root_model: torch.nn.Module):
     # Compose bottom-up sharding where we have natural block boundaries.
     core = getattr(root_model, "model", None)
@@ -138,8 +158,6 @@ def _apply_model_preset_overrides():
 
 
 def _save_checkpoint(epoch: int, step: int):
-    if not is_main_process():
-        return
     raw_model = model
     model_state = None
     optim_state = None
@@ -155,11 +173,18 @@ def _save_checkpoint(epoch: int, step: int):
             options=state_options,
         )
     else:
+        if not is_main_process():
+            return
         if isinstance(raw_model, DistributedDataParallel):
             raw_model = raw_model.module
         raw_model = getattr(raw_model, "_orig_mod", raw_model)
         model_state = raw_model.state_dict()
         optim_state = optimizer.state_dict()
+
+    if not is_main_process():
+        del model_state, optim_state
+        _distributed_barrier()
+        return
 
     weight_tmp = save_paths["weight"] + ".tmp"
     resume_tmp = save_paths["resume"] + ".tmp"
@@ -177,6 +202,8 @@ def _save_checkpoint(epoch: int, step: int):
     }
     torch.save(resume_data, resume_tmp)
     os.replace(resume_tmp, save_paths["resume"])
+    if run_is_fsdp2:
+        _distributed_barrier()
 
 
 def _load_resume():
@@ -412,6 +439,7 @@ if __name__ == "__main__":
     local_rank = init_distributed_mode()
     if dist.is_initialized():
         args.device = f"cuda:{local_rank}"
+        _rank_log(f"Distributed init complete, local_rank={local_rank}, device={args.device}", every_rank=True)
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
 
     lm_config = _build_config()
@@ -468,10 +496,16 @@ if __name__ == "__main__":
         raise RuntimeError("FSDP2 is unavailable in current PyTorch build.")
     if run_is_fsdp2:
         torch.cuda.set_device(torch.device(args.device))
+        _rank_log("Applying FSDP2 sharding...", every_rank=True)
         _apply_fsdp2_sharding(model)
-        Logger(f"FSDP2 enabled, reshard_after_forward={bool(args.fsdp2_reshard_after_forward)}")
+        _rank_log(
+            f"FSDP2 enabled, reshard_after_forward={bool(args.fsdp2_reshard_after_forward)}",
+            every_rank=True,
+        )
         if dist.is_initialized():
-            dist.barrier()
+            _rank_log("Entering post-FSDP barrier...", every_rank=True)
+            _distributed_barrier()
+            _rank_log("Exited post-FSDP barrier.", every_rank=True)
     elif dist.is_initialized():
         model = DistributedDataParallel(model, device_ids=[local_rank])
         Logger("DDP enabled")
