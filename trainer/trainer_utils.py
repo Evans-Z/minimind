@@ -9,6 +9,7 @@ import json
 import random
 import math
 import time
+from datetime import timedelta
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -105,16 +106,15 @@ def init_distributed_mode():
             "nccl_debug": os.environ.get("NCCL_DEBUG"),
             "nccl_socket_ifname": os.environ.get("NCCL_SOCKET_IFNAME"),
             "nccl_ib_disable": os.environ.get("NCCL_IB_DISABLE"),
+            "dist_timeout_seconds": os.environ.get("MINIMIND_DIST_TIMEOUT_SECONDS", "120"),
+            "dist_init_device_id": "disabled",
         },
     )
     # endregion
-    # Explicitly bind process group init to current CUDA device to avoid
-    # rank->GPU ambiguity warnings/hangs on heterogeneous mappings.
-    try:
-        dist.init_process_group(backend="nccl", device_id=torch.device(f"cuda:{local_rank}"))
-    except TypeError:
-        # Backward compatibility for older torch versions without device_id.
-        dist.init_process_group(backend="nccl")
+    dist_timeout = int(os.environ.get("MINIMIND_DIST_TIMEOUT_SECONDS", "120"))
+    # Defer NCCL communicator formation until the first collective; on some
+    # clusters eager device_id initialization hangs inside init_process_group.
+    dist.init_process_group(backend="nccl", timeout=timedelta(seconds=dist_timeout))
     # region agent log
     _agent_debug_log(
         "H1",
