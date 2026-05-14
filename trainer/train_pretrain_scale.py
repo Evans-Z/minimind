@@ -484,12 +484,69 @@ if __name__ == "__main__":
     _apply_model_preset_overrides()
 
     local_rank = init_distributed_mode()
+    # region agent log
+    _agent_debug_log(
+        "H7",
+        "trainer/train_pretrain_scale.py:main:dist_returned_seed_next",
+        "distributed init returned; seed setup next",
+        {
+            "local_rank": local_rank,
+            "dist_initialized": dist.is_initialized(),
+            "device_before_rank_bind": args.device,
+        },
+    )
+    # endregion
     if dist.is_initialized():
         args.device = f"cuda:{local_rank}"
+    # region agent log
+    _agent_debug_log(
+        "H7",
+        "trainer/train_pretrain_scale.py:main:setup_seed_start",
+        "seed setup starting",
+        {
+            "seed": 42 + (dist.get_rank() if dist.is_initialized() else 0),
+            "device": args.device,
+        },
+    )
+    # endregion
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
+    # region agent log
+    _agent_debug_log(
+        "H7",
+        "trainer/train_pretrain_scale.py:main:setup_seed_done",
+        "seed setup completed",
+        {
+            "device": args.device,
+            "cuda_current_device": torch.cuda.current_device() if torch.cuda.is_available() else None,
+        },
+    )
+    # endregion
 
     lm_config = _build_config()
+    # region agent log
+    _agent_debug_log(
+        "H8",
+        "trainer/train_pretrain_scale.py:main:checkpoint_paths_start",
+        "checkpoint path setup starting",
+        {
+            "save_dir": args.save_dir,
+            "save_dir_exists": os.path.exists(args.save_dir),
+        },
+    )
+    # endregion
     save_paths = _checkpoint_paths()
+    # region agent log
+    _agent_debug_log(
+        "H8",
+        "trainer/train_pretrain_scale.py:main:checkpoint_paths_done",
+        "checkpoint path setup completed",
+        {
+            "save_dir": args.save_dir,
+            "weight_path": save_paths.get("weight"),
+            "resume_path": save_paths.get("resume"),
+        },
+    )
+    # endregion
 
     device_type = "cuda" if "cuda" in args.device else "mps"
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
@@ -506,6 +563,17 @@ if __name__ == "__main__":
 
     tb_writer = None
     if args.use_tensorboard and is_main_process():
+        # region agent log
+        _agent_debug_log(
+            "H9",
+            "trainer/train_pretrain_scale.py:main:tensorboard_start",
+            "tensorboard writer setup starting",
+            {
+                "tensorboard_logdir": args.tensorboard_logdir,
+                "tb_run_tag": tb_run_tag,
+            },
+        )
+        # endregion
         try:
             from torch.utils.tensorboard import SummaryWriter
         except Exception as e:
@@ -519,6 +587,16 @@ if __name__ == "__main__":
         tb_writer = SummaryWriter(log_dir=tb_log_dir)
         tb_writer.add_text("meta/run_tag", tb_run_tag if tb_run_tag else "none", 0)
         Logger(f"TensorBoard日志目录: {tb_log_dir}, tag: {tb_run_tag if tb_run_tag else 'none'}")
+        # region agent log
+        _agent_debug_log(
+            "H9",
+            "trainer/train_pretrain_scale.py:main:tensorboard_done",
+            "tensorboard writer setup completed",
+            {
+                "tb_log_dir": tb_log_dir,
+            },
+        )
+        # endregion
 
     # region agent log
     _agent_debug_log(
