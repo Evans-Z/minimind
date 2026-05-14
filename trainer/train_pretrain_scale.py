@@ -5,7 +5,6 @@ __package__ = "trainer"
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import argparse
-import json
 import time
 import warnings
 from contextlib import nullcontext
@@ -64,35 +63,6 @@ lm_config = None
 save_paths = {}
 run_is_fsdp2 = False
 model_config_overrides = {}
-
-
-def _agent_debug_log(hypothesis_id, location, message, data=None, run_id="pre-fix"):
-    try:
-        log_path = os.environ.get(
-            "MINIMIND_DEBUG_LOG",
-            "/Users/phoenix/Works/projects/minimind/.cursor/debug-3ab59d.log",
-        )
-        payload = {
-            "sessionId": "3ab59d",
-            "id": f"log_{int(time.time() * 1000)}_{os.getpid()}",
-            "timestamp": int(time.time() * 1000),
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": {
-                "pid": os.getpid(),
-                "rank": dist.get_rank() if dist.is_initialized() else int(os.environ.get("RANK", -1)),
-                "local_rank": os.environ.get("LOCAL_RANK"),
-                "world_size": dist.get_world_size() if dist.is_initialized() else int(os.environ.get("WORLD_SIZE", -1)),
-                **(data or {}),
-            },
-        }
-        os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
 
 
 def _apply_fsdp2_sharding(root_model: torch.nn.Module):
@@ -168,19 +138,6 @@ def _apply_model_preset_overrides():
 
 
 def _save_checkpoint(epoch: int, step: int):
-    # region agent log
-    _agent_debug_log(
-        "H6",
-        "trainer/train_pretrain_scale.py:_save_checkpoint:enter",
-        "checkpoint save path entered",
-        {
-            "epoch": epoch,
-            "step": step,
-            "is_main_process": is_main_process(),
-            "run_is_fsdp2": run_is_fsdp2,
-        },
-    )
-    # endregion
     if not is_main_process():
         return
     raw_model = model
@@ -260,21 +217,6 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
         input_ids = input_ids.to(args.device, non_blocking=True)
         labels = labels.to(args.device, non_blocking=True)
         last_step = step
-        if step == start_step + 1:
-            # region agent log
-            _agent_debug_log(
-                "H4,H5",
-                "trainer/train_pretrain_scale.py:train_epoch:first_batch_fetched",
-                "first batch fetched and moved to device",
-                {
-                    "epoch": epoch,
-                    "step": step,
-                    "input_shape": list(input_ids.shape),
-                    "label_shape": list(labels.shape),
-                    "device": args.device,
-                },
-            )
-            # endregion
         lr = get_lr(epoch * iters + step, args.epochs * iters, args.learning_rate)
         for param_group in optimizer.param_groups:
             param_group["lr"] = lr
@@ -329,22 +271,6 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
                 f"Epoch:[{epoch + 1}/{args.epochs}] started, first step {step}/{iters}, "
                 f"current loss: {(loss.item() * args.accumulation_steps):.4f}"
             )
-
-        if step == start_step + 1:
-            # region agent log
-            _agent_debug_log(
-                "H5",
-                "trainer/train_pretrain_scale.py:train_epoch:first_step_backward_done",
-                "first train step backward completed",
-                {
-                    "epoch": epoch,
-                    "step": step,
-                    "input_shape": list(input_ids.shape),
-                    "loss": float(loss.item() * args.accumulation_steps),
-                    "used_optimizer_step": step % args.accumulation_steps == 0,
-                },
-            )
-            # endregion
 
         if step % args.save_interval == 0 or step == iters:
             model.eval()
@@ -484,69 +410,12 @@ if __name__ == "__main__":
     _apply_model_preset_overrides()
 
     local_rank = init_distributed_mode()
-    # region agent log
-    _agent_debug_log(
-        "H7",
-        "trainer/train_pretrain_scale.py:main:dist_returned_seed_next",
-        "distributed init returned; seed setup next",
-        {
-            "local_rank": local_rank,
-            "dist_initialized": dist.is_initialized(),
-            "device_before_rank_bind": args.device,
-        },
-    )
-    # endregion
     if dist.is_initialized():
         args.device = f"cuda:{local_rank}"
-    # region agent log
-    _agent_debug_log(
-        "H7",
-        "trainer/train_pretrain_scale.py:main:setup_seed_start",
-        "seed setup starting",
-        {
-            "seed": 42 + (dist.get_rank() if dist.is_initialized() else 0),
-            "device": args.device,
-        },
-    )
-    # endregion
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
-    # region agent log
-    _agent_debug_log(
-        "H7",
-        "trainer/train_pretrain_scale.py:main:setup_seed_done",
-        "seed setup completed",
-        {
-            "device": args.device,
-            "cuda_current_device": torch.cuda.current_device() if torch.cuda.is_available() else None,
-        },
-    )
-    # endregion
 
     lm_config = _build_config()
-    # region agent log
-    _agent_debug_log(
-        "H8",
-        "trainer/train_pretrain_scale.py:main:checkpoint_paths_start",
-        "checkpoint path setup starting",
-        {
-            "save_dir": args.save_dir,
-            "save_dir_exists": os.path.exists(args.save_dir),
-        },
-    )
-    # endregion
     save_paths = _checkpoint_paths()
-    # region agent log
-    _agent_debug_log(
-        "H8",
-        "trainer/train_pretrain_scale.py:main:checkpoint_paths_done",
-        "checkpoint path setup completed",
-        {
-            "save_dir": args.save_dir,
-            "weight_path": save_paths.get("weight"),
-            "resume_path": save_paths.get("resume"),
-        },
-    )
-    # endregion
 
     device_type = "cuda" if "cuda" in args.device else "mps"
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
@@ -563,17 +432,6 @@ if __name__ == "__main__":
 
     tb_writer = None
     if args.use_tensorboard and is_main_process():
-        # region agent log
-        _agent_debug_log(
-            "H9",
-            "trainer/train_pretrain_scale.py:main:tensorboard_start",
-            "tensorboard writer setup starting",
-            {
-                "tensorboard_logdir": args.tensorboard_logdir,
-                "tb_run_tag": tb_run_tag,
-            },
-        )
-        # endregion
         try:
             from torch.utils.tensorboard import SummaryWriter
         except Exception as e:
@@ -587,32 +445,7 @@ if __name__ == "__main__":
         tb_writer = SummaryWriter(log_dir=tb_log_dir)
         tb_writer.add_text("meta/run_tag", tb_run_tag if tb_run_tag else "none", 0)
         Logger(f"TensorBoard日志目录: {tb_log_dir}, tag: {tb_run_tag if tb_run_tag else 'none'}")
-        # region agent log
-        _agent_debug_log(
-            "H9",
-            "trainer/train_pretrain_scale.py:main:tensorboard_done",
-            "tensorboard writer setup completed",
-            {
-                "tb_log_dir": tb_log_dir,
-            },
-        )
-        # endregion
 
-    # region agent log
-    _agent_debug_log(
-        "H2",
-        "trainer/train_pretrain_scale.py:main:init_model_start",
-        "model and tokenizer init starting",
-        {
-            "device": args.device,
-            "model_variant": args.model_variant,
-            "hidden_size": args.hidden_size,
-            "num_hidden_layers": args.num_hidden_layers,
-            "model_path_exists": os.path.exists(args.model_path),
-            "from_weight": args.from_weight,
-        },
-    )
-    # endregion
     model, tokenizer = init_model(
         lm_config,
         args.from_weight,
@@ -621,31 +454,7 @@ if __name__ == "__main__":
         device=args.device,
         model_variant=args.model_variant,
     )
-    # region agent log
-    _agent_debug_log(
-        "H2",
-        "trainer/train_pretrain_scale.py:main:init_model_done_dataset_start",
-        "model init completed; dataset init starting",
-        {
-            "device": args.device,
-            "data_path_exists": os.path.exists(args.data_path),
-            "max_seq_len": args.max_seq_len,
-        },
-    )
-    # endregion
     train_ds = PretrainDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
-    # region agent log
-    _agent_debug_log(
-        "H2",
-        "trainer/train_pretrain_scale.py:main:dataset_done",
-        "dataset init completed",
-        {
-            "dataset_len": len(train_ds),
-            "num_workers": args.num_workers,
-            "batch_size": args.batch_size,
-        },
-    )
-    # endregion
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
     scaler = torch.cuda.amp.GradScaler(enabled=(args.dtype == "float16"))
     Logger(f"Dataset loaded: {len(train_ds)} samples, max_seq_len={args.max_seq_len}")
@@ -659,33 +468,10 @@ if __name__ == "__main__":
         raise RuntimeError("FSDP2 is unavailable in current PyTorch build.")
     if run_is_fsdp2:
         torch.cuda.set_device(torch.device(args.device))
-        # region agent log
-        _agent_debug_log(
-            "H3",
-            "trainer/train_pretrain_scale.py:main:fsdp2_start",
-            "FSDP2 sharding and barrier starting",
-            {
-                "device": args.device,
-                "reshard_after_forward": bool(args.fsdp2_reshard_after_forward),
-                "param_count": sum(p.numel() for p in model.parameters()),
-            },
-        )
-        # endregion
         _apply_fsdp2_sharding(model)
         Logger(f"FSDP2 enabled, reshard_after_forward={bool(args.fsdp2_reshard_after_forward)}")
         if dist.is_initialized():
             dist.barrier()
-        # region agent log
-        _agent_debug_log(
-            "H3",
-            "trainer/train_pretrain_scale.py:main:fsdp2_done",
-            "FSDP2 sharding and barrier completed",
-            {
-                "device": args.device,
-                "reshard_after_forward": bool(args.fsdp2_reshard_after_forward),
-            },
-        )
-        # endregion
     elif dist.is_initialized():
         model = DistributedDataParallel(model, device_ids=[local_rank])
         Logger("DDP enabled")
