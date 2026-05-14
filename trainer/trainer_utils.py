@@ -5,8 +5,10 @@ import os
 import sys
 __package__ = "trainer"
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import json
 import random
 import math
+import time
 import numpy as np
 import torch
 import torch.distributed as dist
@@ -38,6 +40,32 @@ def Logger(content):
         print(content)
 
 
+def _agent_debug_log(hypothesis_id, location, message, data=None, run_id="pre-fix"):
+    try:
+        rank = int(os.environ.get("RANK", -1))
+        world_size = int(os.environ.get("WORLD_SIZE", -1))
+        payload = {
+            "sessionId": "3ab59d",
+            "id": f"log_{int(time.time() * 1000)}_{os.getpid()}",
+            "timestamp": int(time.time() * 1000),
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": {
+                "pid": os.getpid(),
+                "rank": rank,
+                "local_rank": os.environ.get("LOCAL_RANK"),
+                "world_size": world_size,
+                **(data or {}),
+            },
+        }
+        with open("/Users/phoenix/Works/projects/minimind/.cursor/debug-3ab59d.log", "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
 def get_lr(current_step, total_steps, lr):
     return lr*(0.1 + 0.45*(1 + math.cos(math.pi * current_step / total_steps)))
 
@@ -47,6 +75,20 @@ def init_distributed_mode():
         return 0  # 非DDP模式
 
     local_rank = int(os.environ["LOCAL_RANK"])
+    # region agent log
+    _agent_debug_log(
+        "H1",
+        "trainer/trainer_utils.py:init_distributed_mode:start",
+        "distributed init starting",
+        {
+            "master_addr": os.environ.get("MASTER_ADDR"),
+            "master_port": os.environ.get("MASTER_PORT"),
+            "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+            "cuda_available": torch.cuda.is_available(),
+            "cuda_device_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
+        },
+    )
+    # endregion
     torch.cuda.set_device(local_rank)
     # Explicitly bind process group init to current CUDA device to avoid
     # rank->GPU ambiguity warnings/hangs on heterogeneous mappings.
@@ -55,6 +97,19 @@ def init_distributed_mode():
     except TypeError:
         # Backward compatibility for older torch versions without device_id.
         dist.init_process_group(backend="nccl")
+    # region agent log
+    _agent_debug_log(
+        "H1",
+        "trainer/trainer_utils.py:init_distributed_mode:done",
+        "distributed init completed",
+        {
+            "backend": dist.get_backend() if dist.is_initialized() else None,
+            "dist_rank": dist.get_rank() if dist.is_initialized() else None,
+            "dist_world_size": dist.get_world_size() if dist.is_initialized() else None,
+            "current_device": torch.cuda.current_device() if torch.cuda.is_available() else None,
+        },
+    )
+    # endregion
     return local_rank
 
 
