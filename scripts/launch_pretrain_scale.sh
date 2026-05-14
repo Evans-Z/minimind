@@ -273,9 +273,12 @@ if [[ "$NPROC_PER_NODE" -lt 1 ]]; then
 fi
 
 if [[ "$NNODES" -eq 1 ]]; then
-  # Single-node runs do not need RDMA/IB transport. Some clusters expose IB
-  # devices that make NCCL communicator init hang before the first collective.
+  # Single-node runs do not need fabric/RDMA transports. Some clusters expose
+  # IB/NVLS/MNNVL paths that make NCCL communicator init hang before the first
+  # collective; keep user-provided env values if they explicitly tune them.
   export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-1}"
+  export NCCL_NVLS_ENABLE="${NCCL_NVLS_ENABLE:-0}"
+  export NCCL_MNNVL_ENABLE="${NCCL_MNNVL_ENABLE:-0}"
 fi
 
 TRAIN_ARGS=(
@@ -343,6 +346,8 @@ echo "tb_logdir:          ${TENSORBOARD_LOGDIR:-<trainer default>}"
 echo "compile:            $USE_COMPILE"
 echo "cuda_visible:       ${CUDA_VISIBLE_DEVICES:-<not set>}"
 echo "NCCL_IB_DISABLE:    ${NCCL_IB_DISABLE:-<not set>}"
+echo "NCCL_NVLS_ENABLE:   ${NCCL_NVLS_ENABLE:-<not set>}"
+echo "NCCL_MNNVL_ENABLE:  ${NCCL_MNNVL_ENABLE:-<not set>}"
 echo "save_weight:        $SAVE_WEIGHT"
 echo "save_dir:           $SAVE_DIR"
 echo "model_path:         $MODEL_PATH"
