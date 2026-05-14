@@ -31,8 +31,10 @@ CONTEXT_PRESET=""
 BACKEND=""
 SAVE_WEIGHT=""
 SAVE_DIR=""
+MODEL_PATH=""
 DATA_PATH=""
 TB_RUN_TAG=""
+TENSORBOARD_LOGDIR=""
 CUDA_VISIBLE_DEVICES_OPT=""
 
 NPROC_PER_NODE=""
@@ -95,8 +97,10 @@ emit("DRY_RUN", pick("launch", "dry_run"))
 
 emit("SAVE_WEIGHT", pick("run", "save_weight"))
 emit("SAVE_DIR", pick("run", "save_dir"))
+emit("MODEL_PATH", pick("run", "model_path"))
 emit("DATA_PATH", pick("run", "data_path"))
 emit("TB_RUN_TAG", pick("run", "tb_run_tag"))
+emit("TENSORBOARD_LOGDIR", pick("run", "tensorboard_logdir"))
 emit("RESUME", pick("run", "resume"))
 emit("USE_WANDB", pick("run", "use_wandb"))
 emit("USE_TENSORBOARD", pick("run", "use_tensorboard"))
@@ -144,8 +148,10 @@ Options:
 
   --save-weight <name>         Save weight prefix (default from train-config)
   --save-dir <path>            Save directory (default from train-config)
+  --model-path <path>          Tokenizer/model path for init_model (default from train-config)
   --data-path <path>           Data file path (default from train-config)
   --tb-run-tag <tag>           TensorBoard run tag
+  --tensorboard-logdir <path>  TensorBoard log directory
   --cuda-visible-devices <ids> Set CUDA_VISIBLE_DEVICES explicitly (e.g. 0,1,2,3)
 
   --resume                     Enable --from_resume 1
@@ -197,8 +203,10 @@ while [[ $# -gt 0 ]]; do
     --master-port) MASTER_PORT="$2"; shift 2 ;;
     --save-weight) SAVE_WEIGHT="$2"; shift 2 ;;
     --save-dir) SAVE_DIR="$2"; shift 2 ;;
+    --model-path) MODEL_PATH="$2"; shift 2 ;;
     --data-path) DATA_PATH="$2"; shift 2 ;;
     --tb-run-tag) TB_RUN_TAG="$2"; shift 2 ;;
+    --tensorboard-logdir) TENSORBOARD_LOGDIR="$2"; shift 2 ;;
     --cuda-visible-devices) CUDA_VISIBLE_DEVICES_OPT="$2"; shift 2 ;;
     --resume) RESUME=1; shift ;;
     --wandb) USE_WANDB=1; shift ;;
@@ -225,7 +233,7 @@ if [[ "$BACKEND" != "ddp" && "$BACKEND" != "fsdp2" ]]; then
   exit 1
 fi
 
-required_vars=(YAML_PATH SIZE_PRESET CONTEXT_PRESET BACKEND SAVE_WEIGHT SAVE_DIR DATA_PATH)
+required_vars=(YAML_PATH SIZE_PRESET CONTEXT_PRESET BACKEND SAVE_WEIGHT SAVE_DIR MODEL_PATH DATA_PATH)
 missing=()
 for var_name in "${required_vars[@]}"; do
   if [[ -z "${!var_name}" ]]; then
@@ -272,6 +280,7 @@ TRAIN_ARGS=(
   --dist_backend "$BACKEND"
   --save_weight "$SAVE_WEIGHT"
   --save_dir "$SAVE_DIR"
+  --model_path "$MODEL_PATH"
   --data_path "$DATA_PATH"
 )
 if [[ "${#TRAIN_CONFIG_EXTRA_ARGS[@]}" -gt 0 ]]; then
@@ -289,6 +298,9 @@ if [[ "$USE_TENSORBOARD" -eq 1 ]]; then
 fi
 if [[ -n "$TB_RUN_TAG" ]]; then
   TRAIN_ARGS+=(--tb_run_tag "$TB_RUN_TAG")
+fi
+if [[ -n "$TENSORBOARD_LOGDIR" ]]; then
+  TRAIN_ARGS+=(--tensorboard_logdir "$TENSORBOARD_LOGDIR")
 fi
 if [[ "$USE_COMPILE" -eq 1 ]]; then
   TRAIN_ARGS+=(--use_compile 1)
@@ -321,10 +333,12 @@ echo "master:             $MASTER_ADDR:$MASTER_PORT"
 echo "resume:             $RESUME"
 echo "wandb:              $USE_WANDB"
 echo "tensorboard:        $USE_TENSORBOARD"
+echo "tb_logdir:          ${TENSORBOARD_LOGDIR:-<trainer default>}"
 echo "compile:            $USE_COMPILE"
 echo "cuda_visible:       ${CUDA_VISIBLE_DEVICES:-<not set>}"
 echo "save_weight:        $SAVE_WEIGHT"
 echo "save_dir:           $SAVE_DIR"
+echo "model_path:         $MODEL_PATH"
 echo "data_path:          $DATA_PATH"
 echo
 echo "Command:"

@@ -44,15 +44,12 @@ try:
         get_state_dict,
         set_state_dict,
     )
-    from torch.distributed.device_mesh import init_device_mesh
-
     _HAS_FSDP2 = True
 except Exception:
     fully_shard = None
     StateDictOptions = None
     get_state_dict = None
     set_state_dict = None
-    init_device_mesh = None
     _HAS_FSDP2 = False
 
 warnings.filterwarnings("ignore")
@@ -269,6 +266,11 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
                 tb_writer.add_scalar("train/lr", current_lr, global_step)
                 if last_grad_norm is not None:
                     tb_writer.add_scalar("train/grad_norm", last_grad_norm, global_step)
+        elif step == start_step + 1:
+            Logger(
+                f"Epoch:[{epoch + 1}/{args.epochs}] started, first step {step}/{iters}, "
+                f"current loss: {(loss.item() * args.accumulation_steps):.4f}"
+            )
 
         if step % args.save_interval == 0 or step == iters:
             model.eval()
@@ -374,6 +376,7 @@ if __name__ == "__main__":
     parser.add_argument("--hc_balm_diag_cost", default=0.0, type=float, help="BALM对角代价")
     parser.add_argument("--hc_balm_offdiag_cost", default=0.0, type=float, help="BALM非对角代价")
     parser.add_argument("--hc_balm_cost_scale", default=1.0, type=float, help="BALM代价缩放")
+    parser.add_argument("--model_path", type=str, default="../model", help="Tokenizer/模型配置路径")
     parser.add_argument("--data_path", type=str, default="../dataset/pretrain_t2t_mini.jsonl", help="预训练数据路径")
     parser.add_argument("--from_weight", default="none", type=str, help="基于哪个权重训练")
     parser.add_argument("--from_resume", default=0, type=int, choices=[0, 1], help="是否自动检测并续训")
@@ -443,10 +446,18 @@ if __name__ == "__main__":
         tb_writer.add_text("meta/run_tag", tb_run_tag if tb_run_tag else "none", 0)
         Logger(f"TensorBoard日志目录: {tb_log_dir}, tag: {tb_run_tag if tb_run_tag else 'none'}")
 
-    model, tokenizer = init_model(lm_config, args.from_weight, device=args.device, model_variant=args.model_variant)
+    model, tokenizer = init_model(
+        lm_config,
+        args.from_weight,
+        tokenizer_path=args.model_path,
+        save_dir=args.save_dir,
+        device=args.device,
+        model_variant=args.model_variant,
+    )
     train_ds = PretrainDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
     scaler = torch.cuda.amp.GradScaler(enabled=(args.dtype == "float16"))
+    Logger(f"Dataset loaded: {len(train_ds)} samples, max_seq_len={args.max_seq_len}")
 
     if args.use_compile == 1:
         model = torch.compile(model)
@@ -457,16 +468,21 @@ if __name__ == "__main__":
         raise RuntimeError("FSDP2 is unavailable in current PyTorch build.")
     if run_is_fsdp2:
         torch.cuda.set_device(torch.device(args.device))
-        _ = init_device_mesh("cuda", (dist.get_world_size(),))
         _apply_fsdp2_sharding(model)
         Logger(f"FSDP2 enabled, reshard_after_forward={bool(args.fsdp2_reshard_after_forward)}")
+        if dist.is_initialized():
+            dist.barrier()
     elif dist.is_initialized():
         model = DistributedDataParallel(model, device_ids=[local_rank])
         Logger("DDP enabled")
 
+    Logger("Building optimizer...")
     optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
+    Logger("Optimizer built.")
 
+    Logger("Loading resume checkpoint (if enabled)...")
     start_epoch, start_step = _load_resume()
+    Logger(f"Resume state: start_epoch={start_epoch}, start_step={start_step}")
 
     for epoch in range(start_epoch, args.epochs):
         if train_sampler is not None:
@@ -475,7 +491,9 @@ if __name__ == "__main__":
         indices = torch.randperm(len(train_ds)).tolist()
         skip = start_step if (epoch == start_epoch and start_step > 0) else 0
         batch_sampler = SkipBatchSampler(train_sampler or indices, args.batch_size, skip)
+        Logger(f"Building dataloader for epoch {epoch + 1} (skip={skip})...")
         loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=True)
+        Logger(f"Dataloader ready: epoch {epoch + 1}, steps={len(loader)}")
         if skip > 0:
             Logger(f"Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始")
             train_epoch(epoch, loader, len(loader) + skip, start_step, wandb, tb_writer)
