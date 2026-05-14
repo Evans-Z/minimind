@@ -95,6 +95,19 @@ def init_distributed_mode():
     )
     # endregion
     torch.cuda.set_device(local_rank)
+    # region agent log
+    _agent_debug_log(
+        "H1",
+        "trainer/trainer_utils.py:init_distributed_mode:cuda_device_set",
+        "cuda device set; process-group init next",
+        {
+            "current_device": torch.cuda.current_device() if torch.cuda.is_available() else None,
+            "nccl_debug": os.environ.get("NCCL_DEBUG"),
+            "nccl_socket_ifname": os.environ.get("NCCL_SOCKET_IFNAME"),
+            "nccl_ib_disable": os.environ.get("NCCL_IB_DISABLE"),
+        },
+    )
+    # endregion
     # Explicitly bind process group init to current CUDA device to avoid
     # rank->GPU ambiguity warnings/hangs on heterogeneous mappings.
     try:
