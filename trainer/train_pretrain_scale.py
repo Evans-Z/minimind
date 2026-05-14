@@ -85,6 +85,11 @@ def _distributed_barrier():
         dist.barrier()
 
 
+def _estimate_global_tokens(epoch: int, iters: int, step: int) -> int:
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    return int((epoch * iters + step) * args.batch_size * world_size * args.max_seq_len)
+
+
 def _apply_fsdp2_sharding(root_model: torch.nn.Module):
     # Compose bottom-up sharding where we have natural block boundaries.
     core = getattr(root_model, "model", None)
@@ -287,10 +292,15 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
                 )
             if tb_writer and is_main_process():
                 global_step = epoch * iters + step
+                global_tokens = _estimate_global_tokens(epoch, iters, step)
                 tb_writer.add_scalar("train/loss", current_loss, global_step)
                 tb_writer.add_scalar("train/logits_loss", current_logits_loss, global_step)
                 tb_writer.add_scalar("train/aux_loss", current_aux_loss, global_step)
                 tb_writer.add_scalar("train/lr", current_lr, global_step)
+                tb_writer.add_scalar("train/tokens_seen", global_tokens, global_step)
+                tb_writer.add_scalar("train_by_tokens/loss", current_loss, global_tokens)
+                tb_writer.add_scalar("train_by_tokens/logits_loss", current_logits_loss, global_tokens)
+                tb_writer.add_scalar("train_by_tokens/aux_loss", current_aux_loss, global_tokens)
                 if last_grad_norm is not None:
                     tb_writer.add_scalar("train/grad_norm", last_grad_norm, global_step)
         elif step == start_step + 1:
