@@ -243,11 +243,18 @@ def _load_resume():
 
 def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
     start_time = time.time()
+    last_log_time = start_time
+    last_log_step = start_step
+    interval_samples = 0
+    interval_token_positions = 0
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
     last_step = start_step
     last_grad_norm = None
     for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
         input_ids = input_ids.to(args.device, non_blocking=True)
         labels = labels.to(args.device, non_blocking=True)
+        interval_samples += input_ids.size(0) * world_size
+        interval_token_positions += input_ids.numel() * world_size
         last_step = step
         lr = get_lr(epoch * iters + step, args.epochs * iters, args.learning_rate)
         for param_group in optimizer.param_groups:
@@ -269,7 +276,15 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
             optimizer.zero_grad(set_to_none=True)
 
         if step % args.log_interval == 0 or step == iters:
+            if device_type == "cuda":
+                torch.cuda.synchronize()
+            now = time.time()
             spend_time = time.time() - start_time
+            interval_time = max(now - last_log_time, 1e-9)
+            interval_steps = max(step - last_log_step, 1)
+            step_time_sec = interval_time / interval_steps
+            samples_per_sec = interval_samples / interval_time
+            tokens_per_sec_est = interval_token_positions / interval_time
             current_loss = loss.item() * args.accumulation_steps
             current_aux_loss = res.aux_loss.item() if res.aux_loss is not None else 0.0
             current_logits_loss = current_loss - current_aux_loss
@@ -278,7 +293,9 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
             Logger(
                 f"Epoch:[{epoch + 1}/{args.epochs}]({step}/{iters}), "
                 f"loss: {current_loss:.4f}, logits_loss: {current_logits_loss:.4f}, "
-                f"aux_loss: {current_aux_loss:.4f}, lr: {current_lr:.8f}, epoch_time: {eta_min:.1f}min"
+                f"aux_loss: {current_aux_loss:.4f}, lr: {current_lr:.8f}, "
+                f"step_time: {step_time_sec:.3f}s, toks/s(est): {tokens_per_sec_est:.0f}, "
+                f"epoch_time: {eta_min:.1f}min"
             )
             if wandb:
                 wandb.log(
@@ -287,6 +304,9 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
                         "logits_loss": current_logits_loss,
                         "aux_loss": current_aux_loss,
                         "learning_rate": current_lr,
+                        "step_time_sec": step_time_sec,
+                        "samples_per_sec": samples_per_sec,
+                        "tokens_per_sec_estimated": tokens_per_sec_est,
                         "epoch_time": eta_min,
                     }
                 )
@@ -298,12 +318,19 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
                 tb_writer.add_scalar("train/aux_loss", current_aux_loss, global_step)
                 tb_writer.add_scalar("train/lr", current_lr, global_step)
                 tb_writer.add_scalar("train/tokens_seen", global_tokens, global_step)
+                tb_writer.add_scalar("train/step_time_sec", step_time_sec, global_step)
+                tb_writer.add_scalar("train/samples_per_sec", samples_per_sec, global_step)
+                tb_writer.add_scalar("train/tokens_per_sec_estimated", tokens_per_sec_est, global_step)
                 tb_writer.add_scalar("train_by_tokens/loss", current_loss, global_tokens)
                 tb_writer.add_scalar("train_by_tokens/logits_loss", current_logits_loss, global_tokens)
                 tb_writer.add_scalar("train_by_tokens/aux_loss", current_aux_loss, global_tokens)
                 if last_grad_norm is not None:
                     tb_writer.add_scalar("train/grad_norm", last_grad_norm, global_step)
                     tb_writer.add_scalar("train_by_tokens/grad_norm", last_grad_norm, global_tokens)
+            last_log_time = now
+            last_log_step = step
+            interval_samples = 0
+            interval_token_positions = 0
         elif step == start_step + 1:
             Logger(
                 f"Epoch:[{epoch + 1}/{args.epochs}] started, first step {step}/{iters}, "
