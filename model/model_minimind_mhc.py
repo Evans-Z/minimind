@@ -26,7 +26,6 @@ class MiniMindMHCConfig(MiniMindConfig):
         initializer_range=0.02,
         hc_projector="sinkhorn",
         hc_balm_r=1.0,
-        hc_balm_trainable_r=False,
         hc_balm_delta=1e-6,
         hc_balm_diag_cost=0.0,
         hc_balm_offdiag_cost=0.0,
@@ -41,7 +40,6 @@ class MiniMindMHCConfig(MiniMindConfig):
         self.initializer_range = initializer_range
         self.hc_projector = hc_projector
         self.hc_balm_r = hc_balm_r
-        self.hc_balm_trainable_r = hc_balm_trainable_r
         self.hc_balm_delta = hc_balm_delta
         self.hc_balm_diag_cost = hc_balm_diag_cost
         self.hc_balm_offdiag_cost = hc_balm_offdiag_cost
@@ -70,7 +68,6 @@ class MiniMindMHCBlock(nn.Module):
             hc_balm_diag_cost=config.hc_balm_diag_cost,
             hc_balm_offdiag_cost=config.hc_balm_offdiag_cost,
             hc_balm_cost_scale=config.hc_balm_cost_scale,
-            hc_balm_trainable_r=config.hc_balm_trainable_r,
         )
         self.mlp_hc = HyperConnection(
             hc_mult=config.hc_mult,
@@ -85,7 +82,6 @@ class MiniMindMHCBlock(nn.Module):
             hc_balm_diag_cost=config.hc_balm_diag_cost,
             hc_balm_offdiag_cost=config.hc_balm_offdiag_cost,
             hc_balm_cost_scale=config.hc_balm_cost_scale,
-            hc_balm_trainable_r=config.hc_balm_trainable_r,
         )
         self.hc_overlap = bool(config.hc_overlap)
         self._hc_side_stream = None

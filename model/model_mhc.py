@@ -73,7 +73,6 @@ class HyperConnection(nn.Module):
         hc_balm_diag_cost: float = 0.0,
         hc_balm_offdiag_cost: float = 0.0,
         hc_balm_cost_scale: float = 1.0,
-        hc_balm_trainable_r: bool = False,
     ):
         super().__init__()
         self.hc_mult = hc_mult
@@ -87,7 +86,6 @@ class HyperConnection(nn.Module):
         self.hc_balm_diag_cost = hc_balm_diag_cost
         self.hc_balm_offdiag_cost = hc_balm_offdiag_cost
         self.hc_balm_cost_scale = hc_balm_cost_scale
-        self.hc_balm_trainable_r = hc_balm_trainable_r
         self._validate_config()
 
         # projector setup
@@ -116,24 +114,18 @@ class HyperConnection(nn.Module):
 
     def _setup_balm(self):
         self._project_comb = self._project_comb_balm
-        if self.hc_balm_trainable_r:
-            # raw_r is unconstrained; softplus(raw_r) + hc_eps keeps r strictly positive.
-            target_r = max(self.hc_balm_r - self.hc_eps, 1e-12)
-            raw_init = torch.log(torch.expm1(torch.tensor(target_r, dtype=torch.float32)))
-            self.hc_balm_raw_r = nn.Parameter(raw_init)
-        else:
-            self.hc_balm_raw_r = None
         # Balanced ALM constants: 1/(2n+delta), linear cost matrix
+        self.balm_step = self.hc_balm_r / (self.hc_mult + self.hc_balm_delta)
+        self.inv_r = 1.0 / self.hc_balm_r
         self.inv_z_denom = 1.0 / (2.0 * self.hc_mult + self.hc_balm_delta)
-        self.linear_cost = (
-            self.hc_balm_offdiag_cost * torch.ones(self.hc_mult, self.hc_mult)
-            + (self.hc_balm_diag_cost - self.hc_balm_offdiag_cost) * torch.eye(self.hc_mult)
+        linear_cost = (
+            self.hc_balm_offdiag_cost * torch.ones(self.hc_mult, self.hc_mult, dtype=torch.float32)
+            + (self.hc_balm_diag_cost - self.hc_balm_offdiag_cost) * torch.eye(
+                self.hc_mult,
+                dtype=torch.float32,
+            )
         ) * self.hc_balm_cost_scale
-
-    def _get_hc_balm_r(self, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
-        if self.hc_balm_trainable_r:
-            return F.softplus(self.hc_balm_raw_r.to(device=device, dtype=dtype)) + self.hc_eps
-        return torch.tensor(self.hc_balm_r, device=device, dtype=dtype)
+        self.register_buffer("linear_cost", linear_cost, persistent=False)
 
     @torch.no_grad()
     def init_weights(self):
@@ -149,18 +141,14 @@ class HyperConnection(nn.Module):
 
     def _project_comb_balm(self, comb: torch.Tensor) -> torch.Tensor:
         hc = self.hc_mult
-        linear_cost = self.linear_cost.to(device=comb.device, dtype=comb.dtype)
-        hc_balm_r = self._get_hc_balm_r(dtype=comb.dtype, device=comb.device)
-        balm_step = hc_balm_r / (self.hc_mult + self.hc_balm_delta)
-        inv_r = 1.0 / hc_balm_r
-        y = torch.zeros(*comb.shape[:-2], 2 * hc, device=comb.device, dtype=comb.dtype)
+        linear_cost = self.linear_cost
+        dual_shape = (*comb.shape[:-2], hc)
+        row_dual = torch.zeros(dual_shape, device=comb.device, dtype=comb.dtype)
+        col_dual = torch.zeros(dual_shape, device=comb.device, dtype=comb.dtype)
         comb_row_sum = comb.sum(dim=-1)
         comb_col_sum = comb.sum(dim=-2)
         for _ in range(self.hc_iters):
-            u = y[..., :hc]
-            v = y[..., hc:]
-            at_y = u.unsqueeze(-1) + v.unsqueeze(-2)
-            q = comb + (at_y - linear_cost) * inv_r
+            q = comb + (row_dual.unsqueeze(-1) + col_dual.unsqueeze(-2) - linear_cost) * self.inv_r
             comb_next = torch.clamp(q, min=0.0)
             comb_next_row_sum = comb_next.sum(dim=-1)
             comb_next_col_sum = comb_next.sum(dim=-2)
@@ -168,8 +156,8 @@ class HyperConnection(nn.Module):
             col_sum = 2.0 * comb_next_col_sum - comb_col_sum
             z = (row_sum.sum(dim=-1) - hc) * self.inv_z_denom
             z_expand = z.unsqueeze(-1)
-            y[..., :hc].sub_(balm_step * (row_sum - 1.0 - z_expand))
-            y[..., hc:].sub_(balm_step * (col_sum - 1.0 - z_expand))
+            row_dual.sub_(self.balm_step * (row_sum - 1.0 - z_expand))
+            col_dual.sub_(self.balm_step * (col_sum - 1.0 - z_expand))
             comb = comb_next
             comb_row_sum = comb_next_row_sum
             comb_col_sum = comb_next_col_sum

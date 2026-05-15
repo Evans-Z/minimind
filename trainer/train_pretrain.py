@@ -133,13 +133,6 @@ if __name__ == "__main__":
         help="mHC流混合矩阵投影器：sinkhorn或balm",
     )
     parser.add_argument('--hc_balm_r', default=1.0, type=float, help="BALM投影的惩罚系数r")
-    parser.add_argument(
-        '--hc_balm_trainable_r',
-        default=0,
-        type=int,
-        choices=[0, 1],
-        help="是否将BALM惩罚系数r设为可训练参数（0=否，1=是）",
-    )
     parser.add_argument('--hc_balm_delta', default=1e-6, type=float, help="BALM投影的数值稳定项delta")
     parser.add_argument('--hc_balm_diag_cost', default=0.0, type=float, help="BALM线性代价系数lambda，对角代价矩阵C=lambda*I")
     parser.add_argument('--hc_balm_offdiag_cost', default=0.0, type=float, help="BALM线性代价系数，非对角项代价")
@@ -176,7 +169,6 @@ if __name__ == "__main__":
             hc_eps=args.hc_eps,
             hc_projector=args.hc_projector,
             hc_balm_r=args.hc_balm_r,
-            hc_balm_trainable_r=bool(args.hc_balm_trainable_r),
             hc_balm_delta=args.hc_balm_delta,
             hc_balm_diag_cost=args.hc_balm_diag_cost,
             hc_balm_offdiag_cost=args.hc_balm_offdiag_cost,

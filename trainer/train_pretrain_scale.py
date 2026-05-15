@@ -113,7 +113,7 @@ def _checkpoint_paths():
 
 
 def _coerce_override_value(key: str, value: Any) -> Any:
-    if key in {"use_moe", "hc_balm_trainable_r", "hc_overlap"}:
+    if key in {"use_moe", "hc_overlap"}:
         return int(bool(value))
     return value
 
@@ -369,7 +369,6 @@ def _build_config():
         config_kwargs.pop("hc_eps", None)
         config_kwargs.pop("hc_projector", None)
         config_kwargs.pop("hc_balm_r", None)
-        config_kwargs.pop("hc_balm_trainable_r", None)
         config_kwargs.pop("hc_balm_delta", None)
         config_kwargs.pop("hc_balm_diag_cost", None)
         config_kwargs.pop("hc_balm_offdiag_cost", None)
@@ -384,7 +383,6 @@ def _build_config():
             hc_eps=args.hc_eps,
             hc_projector=args.hc_projector,
             hc_balm_r=args.hc_balm_r,
-            hc_balm_trainable_r=bool(args.hc_balm_trainable_r),
             hc_balm_delta=args.hc_balm_delta,
             hc_balm_diag_cost=args.hc_balm_diag_cost,
             hc_balm_offdiag_cost=args.hc_balm_offdiag_cost,
@@ -442,7 +440,6 @@ if __name__ == "__main__":
     parser.add_argument("--hc_eps", default=1e-6, type=float, help="mHC数值稳定项")
     parser.add_argument("--hc_projector", default="sinkhorn", type=str, choices=["sinkhorn", "balm"], help="mHC投影器")
     parser.add_argument("--hc_balm_r", default=1.0, type=float, help="BALM投影惩罚系数r")
-    parser.add_argument("--hc_balm_trainable_r", default=0, type=int, choices=[0, 1], help="是否将BALM r设为可训练")
     parser.add_argument("--hc_balm_delta", default=1e-6, type=float, help="BALM投影稳定项delta")
     parser.add_argument("--hc_balm_diag_cost", default=0.0, type=float, help="BALM对角代价")
     parser.add_argument("--hc_balm_offdiag_cost", default=0.0, type=float, help="BALM非对角代价")
