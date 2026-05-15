@@ -30,6 +30,7 @@ class MiniMindMHCConfig(MiniMindConfig):
         hc_balm_diag_cost=0.0,
         hc_balm_offdiag_cost=0.0,
         hc_balm_cost_scale=1.0,
+        hc_balm_kernel="auto",
         hc_overlap=False,
         **kwargs,
     ):
@@ -44,6 +45,7 @@ class MiniMindMHCConfig(MiniMindConfig):
         self.hc_balm_diag_cost = hc_balm_diag_cost
         self.hc_balm_offdiag_cost = hc_balm_offdiag_cost
         self.hc_balm_cost_scale = hc_balm_cost_scale
+        self.hc_balm_kernel = hc_balm_kernel
         self.hc_overlap = hc_overlap
 
 
@@ -68,6 +70,7 @@ class MiniMindMHCBlock(nn.Module):
             hc_balm_diag_cost=config.hc_balm_diag_cost,
             hc_balm_offdiag_cost=config.hc_balm_offdiag_cost,
             hc_balm_cost_scale=config.hc_balm_cost_scale,
+            hc_balm_kernel=config.hc_balm_kernel,
         )
         self.mlp_hc = HyperConnection(
             hc_mult=config.hc_mult,
@@ -82,6 +85,7 @@ class MiniMindMHCBlock(nn.Module):
             hc_balm_diag_cost=config.hc_balm_diag_cost,
             hc_balm_offdiag_cost=config.hc_balm_offdiag_cost,
             hc_balm_cost_scale=config.hc_balm_cost_scale,
+            hc_balm_kernel=config.hc_balm_kernel,
         )
         self.hc_overlap = bool(config.hc_overlap)
         self._hc_side_stream = None

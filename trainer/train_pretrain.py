@@ -137,6 +137,13 @@ if __name__ == "__main__":
     parser.add_argument('--hc_balm_diag_cost', default=0.0, type=float, help="BALM线性代价系数lambda，对角代价矩阵C=lambda*I")
     parser.add_argument('--hc_balm_offdiag_cost', default=0.0, type=float, help="BALM线性代价系数，非对角项代价")
     parser.add_argument('--hc_balm_cost_scale', default=1.0, type=float, help="BALM代价缩放系数")
+    parser.add_argument(
+        '--hc_balm_kernel',
+        default='auto',
+        type=str,
+        choices=['auto', 'torch', 'triton'],
+        help="BALM投影内核：auto/torch/triton",
+    )
     parser.add_argument("--data_path", type=str, default="../dataset/pretrain_t2t_mini.jsonl", help="预训练数据路径")
     parser.add_argument('--from_weight', default='none', type=str, help="基于哪个权重训练，为none则从头开始")
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
@@ -173,6 +180,7 @@ if __name__ == "__main__":
             hc_balm_diag_cost=args.hc_balm_diag_cost,
             hc_balm_offdiag_cost=args.hc_balm_offdiag_cost,
             hc_balm_cost_scale=args.hc_balm_cost_scale,
+            hc_balm_kernel=args.hc_balm_kernel,
         )
     else:
         lm_config = MiniMindConfig(

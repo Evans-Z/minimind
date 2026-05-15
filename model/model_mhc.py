@@ -3,6 +3,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 
+try:
+    from model.balm_triton import balm_project_triton, is_triton_balm_available
+except Exception:
+    balm_project_triton = None
+    is_triton_balm_available = lambda: False
+
 
 class UnweightedRMSNorm(nn.Module):
     def __init__(self, eps: float = 1e-6):
@@ -48,6 +54,10 @@ class HyperConnection(nn.Module):
     def _validate_config(self):
         if self.hc_projector not in {"sinkhorn", "balm"}:
             raise ValueError(f"Unsupported hc_projector={self.hc_projector!r}. Expected 'sinkhorn' or 'balm'.")
+        if self.hc_balm_kernel not in {"auto", "torch", "triton"}:
+            raise ValueError(
+                f"Unsupported hc_balm_kernel={self.hc_balm_kernel!r}. Expected 'auto', 'torch', or 'triton'."
+            )
         if self.hc_balm_r <= 0:
             raise ValueError(f"hc_balm_r must be positive, got {self.hc_balm_r}")
         if self.hc_balm_delta <= 0:
@@ -73,6 +83,7 @@ class HyperConnection(nn.Module):
         hc_balm_diag_cost: float = 0.0,
         hc_balm_offdiag_cost: float = 0.0,
         hc_balm_cost_scale: float = 1.0,
+        hc_balm_kernel: str = "auto",
     ):
         super().__init__()
         self.hc_mult = hc_mult
@@ -86,6 +97,7 @@ class HyperConnection(nn.Module):
         self.hc_balm_diag_cost = hc_balm_diag_cost
         self.hc_balm_offdiag_cost = hc_balm_offdiag_cost
         self.hc_balm_cost_scale = hc_balm_cost_scale
+        self.hc_balm_kernel = hc_balm_kernel.lower()
         self._validate_config()
 
         # projector setup
@@ -137,7 +149,7 @@ class HyperConnection(nn.Module):
             comb = comb / (comb.sum(dim=-2, keepdim=True) + self.hc_eps)
         return comb
 
-    def _project_comb_balm(self, comb: torch.Tensor) -> torch.Tensor:
+    def _project_comb_balm_reference(self, comb: torch.Tensor) -> torch.Tensor:
         hc = self.hc_mult
         linear_cost = self.linear_cost.to(device=comb.device, dtype=comb.dtype)
         hc_balm_r = torch.tensor(self.hc_balm_r, device=comb.device, dtype=comb.dtype)
@@ -165,6 +177,22 @@ class HyperConnection(nn.Module):
             comb_col_sum = comb_next_col_sum
         
         return comb
+
+    def _project_comb_balm(self, comb: torch.Tensor) -> torch.Tensor:
+        if self.hc_balm_kernel == "torch":
+            return self._project_comb_balm_reference(comb)
+        can_use_triton = is_triton_balm_available() and comb.is_cuda
+        if self.hc_balm_kernel == "triton" and not can_use_triton:
+            raise RuntimeError("hc_balm_kernel='triton' requires Triton and CUDA input tensors.")
+        if can_use_triton:
+            return balm_project_triton(
+                comb,
+                self.linear_cost,
+                hc_balm_r=self.hc_balm_r,
+                hc_balm_delta=self.hc_balm_delta,
+                hc_iters=self.hc_iters,
+            )
+        return self._project_comb_balm_reference(comb)
 
     def compute_mix(self, hidden_streams: torch.Tensor) -> torch.Tensor:
         flat = self.input_norm(hidden_streams.flatten(start_dim=2).float())
