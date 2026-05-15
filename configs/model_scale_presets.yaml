@@ -81,6 +81,17 @@ size_presets:
     hc_balm_diag_cost: 0.0
     hc_balm_offdiag_cost: 0.0
     hc_balm_cost_scale: 1.0
+  
+  mhc_1b_sinkhorn:
+    model_variant: mhc
+    use_moe: 0
+    hidden_size: 2048
+    num_hidden_layers: 24
+    num_attention_heads: 16
+    num_key_value_heads: 8
+    hc_mult: 4
+    hc_iters: 20
+    hc_projector: sinkhorn
 
 context_presets:
   ctx_340:
