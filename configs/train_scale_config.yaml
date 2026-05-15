@@ -44,3 +44,4 @@ train:
     # save_interval: 1000
     # dtype: bfloat16
     # fsdp2_reshard_after_forward: 1
+    # hc_overlap: 1  # experimental: overlap mHC post/comb projection with attention/MLP

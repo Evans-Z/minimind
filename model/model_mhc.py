@@ -176,7 +176,32 @@ class HyperConnection(nn.Module):
         
         return comb
 
-    def forward(self, hidden_streams: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def compute_mix(self, hidden_streams: torch.Tensor) -> torch.Tensor:
+        flat = self.input_norm(hidden_streams.flatten(start_dim=2).float())
+        return F.linear(flat, self.fn.float())  # [B, S, (2+H)*H]
+
+    def collapse_from_mix(self, mix: torch.Tensor, hidden_streams: torch.Tensor) -> torch.Tensor:
+        pre_scale = self.scale[0]
+        hc = self.hc_mult
+        pre = torch.sigmoid(mix[..., :hc] * pre_scale + self.base[:hc]) + self.hc_eps
+        # Collapse the `hc_mult` parallel streams down to a single sequence using
+        # the `pre` weights: one weighted sum across the stream axis, ready for
+        # the sublayer (attn / MLP).
+        return (pre.unsqueeze(-1) * hidden_streams).sum(dim=-2).to(hidden_streams.dtype)
+
+    def post_comb_from_mix(self, mix: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        _, post_scale, comb_scale = self.scale.unbind(0)
+        hc = self.hc_mult
+        post = torch.sigmoid(mix[..., hc:2*hc] * post_scale + self.base[hc:2*hc]) + self.hc_eps
+        comb = (
+            torch.sigmoid(
+                mix[..., 2*hc:].view(*mix.shape[:-1], hc, hc) * comb_scale + self.base[2*hc:].view(hc, hc)
+            )
+            + self.hc_eps
+        )
+        return post, self._project_comb(comb)
+
+    def forward(self, hidden_streams: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         r"""
         Compute `pre`, `post`, `comb` from the mHC mapping (paper §2.2 eq. 8).
         `comb` is projected onto the doubly-stochastic manifold via the selected
@@ -185,23 +210,9 @@ class HyperConnection(nn.Module):
         projection into the sublayer); `post` and `comb` are returned for the
         caller to apply on the sublayer output.
         """
-        flat = self.input_norm(hidden_streams.flatten(start_dim=2).float())
-        mix = F.linear(flat, self.fn.float())  # [B, S, (2+H)*H]
-        pre_scale, post_scale, comb_scale = self.scale.unbind(0)
-        hc = self.hc_mult
-        pre = torch.sigmoid(mix[..., :hc] * pre_scale + self.base[:hc]) + self.hc_eps
-        post = torch.sigmoid(mix[..., hc:2*hc] * post_scale + self.base[hc:2*hc]) + self.hc_eps
-        comb = (
-            torch.sigmoid(
-                mix[..., 2*hc:].view(*mix.shape[:-1], hc, hc) * comb_scale + self.base[2*hc:].view(hc, hc)
-            )
-            + self.hc_eps
-        )
-        comb = self._project_comb(comb)
-        # Collapse the `hc_mult` parallel streams down to a single sequence using
-        # the `pre` weights: one weighted sum across the stream axis, ready for
-        # the sublayer (attn / MLP).
-        collapsed = (pre.unsqueeze(-1) * hidden_streams).sum(dim=-2).to(hidden_streams.dtype)
+        mix = self.compute_mix(hidden_streams)
+        post, comb = self.post_comb_from_mix(mix)
+        collapsed = self.collapse_from_mix(mix, hidden_streams)
         return post, comb, collapsed
 
 

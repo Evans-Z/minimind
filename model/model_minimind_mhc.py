@@ -31,6 +31,7 @@ class MiniMindMHCConfig(MiniMindConfig):
         hc_balm_diag_cost=0.0,
         hc_balm_offdiag_cost=0.0,
         hc_balm_cost_scale=1.0,
+        hc_overlap=False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -45,6 +46,7 @@ class MiniMindMHCConfig(MiniMindConfig):
         self.hc_balm_diag_cost = hc_balm_diag_cost
         self.hc_balm_offdiag_cost = hc_balm_offdiag_cost
         self.hc_balm_cost_scale = hc_balm_cost_scale
+        self.hc_overlap = hc_overlap
 
 
 class MiniMindMHCBlock(nn.Module):
@@ -85,6 +87,31 @@ class MiniMindMHCBlock(nn.Module):
             hc_balm_cost_scale=config.hc_balm_cost_scale,
             hc_balm_trainable_r=config.hc_balm_trainable_r,
         )
+        self.hc_overlap = bool(config.hc_overlap)
+        self._hc_side_stream = None
+
+    def _can_overlap_hc(self, hidden_states):
+        compiler = getattr(torch, "compiler", None)
+        is_compiling = compiler is not None and compiler.is_compiling()
+        return self.hc_overlap and hidden_states.is_cuda and not is_compiling
+
+    def _start_post_comb(self, hc_module, mix):
+        if not self._can_overlap_hc(mix):
+            return None, hc_module.post_comb_from_mix(mix)
+
+        current_stream = torch.cuda.current_stream(mix.device)
+        if self._hc_side_stream is None or self._hc_side_stream.device != mix.device:
+            self._hc_side_stream = torch.cuda.Stream(device=mix.device)
+        side_stream = self._hc_side_stream
+        with torch.cuda.stream(side_stream):
+            side_stream.wait_stream(current_stream)
+            post_comb = hc_module.post_comb_from_mix(mix)
+        return side_stream, post_comb
+
+    def _finish_post_comb(self, side_stream, post_comb):
+        if side_stream is not None:
+            torch.cuda.current_stream().wait_stream(side_stream)
+        return post_comb
 
     def forward(self, hidden_states, position_embeddings, past_key_value=None, use_cache=False, attention_mask=None):
         # hidde_states throughout: [B, S, hc_mult, hidden]
@@ -92,7 +119,9 @@ class MiniMindMHCBlock(nn.Module):
         # the .to(dtype) puts everything back to the input dype before mixing
         # so both sites stay consistent with `hidden_states`'s entry dtype.
         dtype = hidden_states.dtype
-        post, comb, collapsed = self.attn_hc(hidden_states)
+        attn_mix = self.attn_hc.compute_mix(hidden_states)
+        attn_side_stream, attn_post_comb = self._start_post_comb(self.attn_hc, attn_mix)
+        collapsed = self.attn_hc.collapse_from_mix(attn_mix, hidden_states)
         attn_out, present_key_value = self.self_attn(
             self.input_layernorm(collapsed),
             position_embeddings,
@@ -100,12 +129,16 @@ class MiniMindMHCBlock(nn.Module):
             use_cache,
             attention_mask,
         )
+        post, comb = self._finish_post_comb(attn_side_stream, attn_post_comb)
         hidden_states = post.to(dtype).unsqueeze(-1) * attn_out.unsqueeze(-2) + torch.matmul(
             comb.to(dtype), hidden_states
         )
 
-        post, comb, collapsed = self.mlp_hc(hidden_states)
+        mlp_mix = self.mlp_hc.compute_mix(hidden_states)
+        mlp_side_stream, mlp_post_comb = self._start_post_comb(self.mlp_hc, mlp_mix)
+        collapsed = self.mlp_hc.collapse_from_mix(mlp_mix, hidden_states)
         mlp_out = self.mlp(self.post_attention_layernorm(collapsed))
+        post, comb = self._finish_post_comb(mlp_side_stream, mlp_post_comb)
         hidden_states = post.to(dtype).unsqueeze(-1) * mlp_out.unsqueeze(-2) + torch.matmul(
             comb.to(dtype), hidden_states
         )
