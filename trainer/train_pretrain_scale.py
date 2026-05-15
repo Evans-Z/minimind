@@ -63,6 +63,7 @@ lm_config = None
 save_paths = {}
 run_is_fsdp2 = False
 model_config_overrides = {}
+profiler = None
 
 
 def _rank_prefix():
@@ -342,6 +343,9 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
             _save_checkpoint(epoch=epoch, step=step)
             model.train()
 
+        if profiler is not None:
+            profiler.step()
+
         del input_ids, labels, res, loss
 
     if last_step > start_step and last_step % args.accumulation_steps != 0:
@@ -454,6 +458,11 @@ if __name__ == "__main__":
     parser.add_argument("--tensorboard_logdir", type=str, default="../runs/pretrain_scale", help="TensorBoard日志目录")
     parser.add_argument("--tb_run_tag", type=str, default="", help="TensorBoard运行标签")
     parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="是否使用torch.compile")
+    parser.add_argument("--profile_steps", default=0, type=int, help="启用torch.profiler并采集的活跃step数；0为关闭")
+    parser.add_argument("--profile_wait", default=2, type=int, help="profiler开始前跳过的step数")
+    parser.add_argument("--profile_warmup", default=2, type=int, help="profiler采集前预热的step数")
+    parser.add_argument("--profile_dir", type=str, default="runs/profiler", help="torch.profiler TensorBoard trace输出目录")
+    parser.add_argument("--profile_memory", default=0, type=int, choices=[0, 1], help="profiler是否记录内存")
     parser.add_argument("--dist_backend", default="fsdp2", type=str, choices=["ddp", "fsdp2"], help="分布式后端")
     parser.add_argument(
         "--fsdp2_reshard_after_forward",
@@ -532,6 +541,32 @@ if __name__ == "__main__":
         model = torch.compile(model)
         Logger("torch.compile enabled")
 
+    if args.profile_steps > 0:
+        activities = [torch.profiler.ProfilerActivity.CPU]
+        if torch.cuda.is_available():
+            activities.append(torch.profiler.ProfilerActivity.CUDA)
+        profile_rank_dir = os.path.join(args.profile_dir, f"rank{dist.get_rank() if dist.is_initialized() else 0}")
+        os.makedirs(profile_rank_dir, exist_ok=True)
+        profiler = torch.profiler.profile(
+            activities=activities,
+            schedule=torch.profiler.schedule(
+                wait=args.profile_wait,
+                warmup=args.profile_warmup,
+                active=args.profile_steps,
+                repeat=1,
+            ),
+            on_trace_ready=torch.profiler.tensorboard_trace_handler(profile_rank_dir),
+            record_shapes=True,
+            profile_memory=bool(args.profile_memory),
+            with_stack=False,
+        )
+        profiler.start()
+        _rank_log(
+            f"Profiler enabled: wait={args.profile_wait}, warmup={args.profile_warmup}, "
+            f"active={args.profile_steps}, dir={profile_rank_dir}",
+            every_rank=True,
+        )
+
     run_is_fsdp2 = args.dist_backend == "fsdp2" and dist.is_initialized()
     if args.dist_backend == "fsdp2" and not _HAS_FSDP2:
         raise RuntimeError("FSDP2 is unavailable in current PyTorch build.")
@@ -577,5 +612,7 @@ if __name__ == "__main__":
 
     if tb_writer:
         tb_writer.close()
+    if profiler is not None:
+        profiler.stop()
     if dist.is_initialized():
         dist.destroy_process_group()
