@@ -55,7 +55,6 @@ size_presets:
     hc_balm_diag_cost: 0.0
     hc_balm_offdiag_cost: 0.0
     hc_balm_cost_scale: 1.0
-    # hc_balm_kernel: triton
 
   mhc_64m_sinkhorn:
     model_variant: mhc
@@ -82,7 +81,6 @@ size_presets:
     hc_balm_diag_cost: 0.0
     hc_balm_offdiag_cost: 0.0
     hc_balm_cost_scale: 1.0
-    # hc_balm_kernel: triton
   
   mhc_1b_sinkhorn:
     model_variant: mhc

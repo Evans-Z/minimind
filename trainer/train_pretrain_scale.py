@@ -373,7 +373,6 @@ def _build_config():
         config_kwargs.pop("hc_balm_diag_cost", None)
         config_kwargs.pop("hc_balm_offdiag_cost", None)
         config_kwargs.pop("hc_balm_cost_scale", None)
-        config_kwargs.pop("hc_balm_kernel", None)
         config_kwargs.pop("hc_overlap", None)
         return MiniMindMHCConfig(
             hidden_size=args.hidden_size,
@@ -388,7 +387,6 @@ def _build_config():
             hc_balm_diag_cost=args.hc_balm_diag_cost,
             hc_balm_offdiag_cost=args.hc_balm_offdiag_cost,
             hc_balm_cost_scale=args.hc_balm_cost_scale,
-            hc_balm_kernel=args.hc_balm_kernel,
             hc_overlap=bool(args.hc_overlap),
             **config_kwargs,
         )
@@ -446,13 +444,6 @@ if __name__ == "__main__":
     parser.add_argument("--hc_balm_diag_cost", default=0.0, type=float, help="BALM对角代价")
     parser.add_argument("--hc_balm_offdiag_cost", default=0.0, type=float, help="BALM非对角代价")
     parser.add_argument("--hc_balm_cost_scale", default=1.0, type=float, help="BALM代价缩放")
-    parser.add_argument(
-        "--hc_balm_kernel",
-        default="auto",
-        type=str,
-        choices=["auto", "torch", "triton"],
-        help="BALM投影内核：auto/torch/triton",
-    )
     parser.add_argument("--hc_overlap", default=0, type=int, choices=[0, 1], help="是否用CUDA side stream重叠mHC投影")
     parser.add_argument("--model_path", type=str, default="../model", help="Tokenizer/模型配置路径")
     parser.add_argument("--data_path", type=str, default="../dataset/pretrain_t2t_mini.jsonl", help="预训练数据路径")
