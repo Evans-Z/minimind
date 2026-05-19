@@ -37,6 +37,9 @@ run:
 train:
   overrides:
     # learning_rate: 5e-4
+    # warmup_steps: 1000  # optimizer steps; overrides warmup_ratio when > 0
+    # warmup_ratio: 0.01  # common choice: 1%-3% of total optimizer steps
+    # min_lr_ratio: 0.1  # cosine decays to learning_rate * min_lr_ratio
     # batch_size: 32
     # accumulation_steps: 8
     # epochs: 2

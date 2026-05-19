@@ -91,6 +91,23 @@ def _estimate_global_tokens(epoch: int, iters: int, step: int) -> int:
     return int((epoch * iters + step) * args.batch_size * world_size * args.max_seq_len)
 
 
+def _num_update_steps(num_micro_steps: int) -> int:
+    return max(1, (num_micro_steps + args.accumulation_steps - 1) // args.accumulation_steps)
+
+
+def _resolve_warmup_steps(total_update_steps: int) -> int:
+    if args.warmup_steps > 0:
+        return min(args.warmup_steps, total_update_steps)
+    if args.warmup_ratio > 0:
+        return min(int(total_update_steps * args.warmup_ratio), total_update_steps)
+    return 0
+
+
+def _global_update_step(epoch: int, iters: int, step: int) -> int:
+    global_micro_step = epoch * iters + step
+    return _num_update_steps(global_micro_step)
+
+
 def _apply_fsdp2_sharding(root_model: torch.nn.Module):
     # Compose bottom-up sharding where we have natural block boundaries.
     core = getattr(root_model, "model", None)
@@ -251,13 +268,22 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     last_step = start_step
     last_grad_norm = None
+    total_update_steps = _num_update_steps(args.epochs * iters)
+    warmup_steps = _resolve_warmup_steps(total_update_steps)
     for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
         input_ids = input_ids.to(args.device, non_blocking=True)
         labels = labels.to(args.device, non_blocking=True)
         interval_samples += input_ids.size(0) * world_size
         interval_token_positions += input_ids.numel() * world_size
         last_step = step
-        lr = get_lr(epoch * iters + step, args.epochs * iters, args.learning_rate)
+        update_step = _global_update_step(epoch, iters, step)
+        lr = get_lr(
+            update_step,
+            total_update_steps,
+            args.learning_rate,
+            warmup_steps=warmup_steps,
+            min_lr_ratio=args.min_lr_ratio,
+        )
         for param_group in optimizer.param_groups:
             param_group["lr"] = lr
 
@@ -423,6 +449,9 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
     parser.add_argument("--batch_size", type=int, default=32, help="batch size")
     parser.add_argument("--learning_rate", type=float, default=5e-4, help="初始学习率")
+    parser.add_argument("--warmup_steps", type=int, default=0, help="线性warmup的optimizer step数量；优先于warmup_ratio")
+    parser.add_argument("--warmup_ratio", type=float, default=0.0, help="线性warmup占总optimizer step的比例")
+    parser.add_argument("--min_lr_ratio", type=float, default=0.1, help="cosine decay结束时的最小学习率比例")
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "mps", help="训练设备")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="混合精度类型")
     parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
@@ -481,6 +510,12 @@ if __name__ == "__main__":
         raise ValueError(
             "With --model_config_yaml, provide at least one of: --size_preset, --context_preset"
         )
+    if args.warmup_steps < 0:
+        raise ValueError("--warmup_steps must be non-negative")
+    if not 0.0 <= args.warmup_ratio <= 1.0:
+        raise ValueError("--warmup_ratio must be in [0, 1]")
+    if not 0.0 <= args.min_lr_ratio <= 1.0:
+        raise ValueError("--min_lr_ratio must be in [0, 1]")
     _apply_model_preset_overrides()
 
     local_rank = init_distributed_mode()

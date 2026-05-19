@@ -39,8 +39,26 @@ def Logger(content):
         print(content)
 
 
-def get_lr(current_step, total_steps, lr):
-    return lr*(0.1 + 0.45*(1 + math.cos(math.pi * current_step / total_steps)))
+def get_lr(current_step, total_steps, lr, warmup_steps=0, min_lr_ratio=0.1):
+    """
+    Linear warmup followed by cosine decay.
+
+    With warmup_steps=0 and min_lr_ratio=0.1 this matches the previous schedule:
+    lr -> 0.1 * lr over the full run.
+    """
+    if total_steps <= 0:
+        return lr
+    current_step = min(max(current_step, 0), total_steps)
+    warmup_steps = min(max(int(warmup_steps), 0), total_steps)
+    min_lr_ratio = min(max(float(min_lr_ratio), 0.0), 1.0)
+
+    if warmup_steps > 0 and current_step <= warmup_steps:
+        return lr * current_step / warmup_steps
+
+    decay_steps = max(total_steps - warmup_steps, 1)
+    decay_step = min(max(current_step - warmup_steps, 0), decay_steps)
+    cosine = 0.5 * (1.0 + math.cos(math.pi * decay_step / decay_steps))
+    return lr * (min_lr_ratio + (1.0 - min_lr_ratio) * cosine)
 
 
 def init_distributed_mode():
