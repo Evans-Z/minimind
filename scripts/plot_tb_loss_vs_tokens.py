@@ -18,6 +18,7 @@ Examples:
       --ema-alpha 0.03 \
       --zoom \
       --zoom-fraction 0.25 \
+      --zoom-inset-bounds 0.50,0.48,0.45,0.38 \
       --save-pdf \
       --output model/loss_vs_tokens.png
 """
@@ -321,6 +322,23 @@ def _apply_axis_style(ax, xlabel: str, ylabel: str, token_scale: float):
     ax.xaxis.set_major_formatter(formatter)
 
 
+def _parse_inset_bounds(value: str) -> tuple[float, float, float, float]:
+    """Parse matplotlib inset bounds: left,bottom,width,height in axes fraction."""
+    parts = [part.strip() for part in value.split(",")]
+    if len(parts) != 4:
+        raise ValueError(
+            "--zoom-inset-bounds must have four comma-separated values: "
+            "left,bottom,width,height"
+        )
+    bounds = tuple(float(part) for part in parts)
+    left, bottom, width, height = bounds
+    if width <= 0.0 or height <= 0.0:
+        raise ValueError("--zoom-inset-bounds width and height must be positive.")
+    if left < 0.0 or bottom < 0.0 or left + width > 1.0 or bottom + height > 1.0:
+        raise ValueError("--zoom-inset-bounds must fit inside [0, 1] axes space.")
+    return bounds
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Plot TensorBoard loss curves against token count."
@@ -442,13 +460,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--zoom",
         action="store_true",
-        help="Add a second subplot zooming into the tail of the selected token range.",
+        help="Add an inset window zooming into the tail of the selected token range.",
     )
     parser.add_argument(
         "--zoom-fraction",
         type=float,
         default=0.25,
-        help="Fraction of selected x-range shown in the zoom subplot.",
+        help="Fraction of selected x-range shown in the zoom inset.",
     )
     parser.add_argument(
         "--zoom-token-min",
@@ -461,6 +479,15 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help="Explicit zoom max token. Defaults to selected range max.",
+    )
+    parser.add_argument(
+        "--zoom-inset-bounds",
+        type=str,
+        default="0.50,0.48,0.45,0.38",
+        help=(
+            "Inset position as left,bottom,width,height in main axes fraction. "
+            "Move this when the default overlaps curves."
+        ),
     )
     parser.add_argument("--y-min", type=float, default=None, help="Main plot y-axis min.")
     parser.add_argument("--y-max", type=float, default=None, help="Main plot y-axis max.")
@@ -545,17 +572,7 @@ def main() -> None:
     selected_max = token_max if token_max is not None else float(np.max(all_tokens))
 
     plt.style.use("seaborn-v0_8-whitegrid")
-    if args.zoom:
-        fig, (ax, zoom_ax) = plt.subplots(
-            2,
-            1,
-            figsize=(10, 8),
-            sharey=False,
-            gridspec_kw={"height_ratios": [2.0, 1.15]},
-        )
-    else:
-        fig, ax = plt.subplots(figsize=(10, 6))
-        zoom_ax = None
+    fig, ax = plt.subplots(figsize=(10, 6))
 
     for curve in curves:
         ax.plot(
@@ -574,7 +591,7 @@ def main() -> None:
     ax.set_xlim(selected_min, selected_max)
     ax.legend(loc="best", frameon=True)
 
-    if zoom_ax is not None:
+    if args.zoom:
         zoom_min = _parse_token_count(args.zoom_token_min)
         zoom_max = _parse_token_count(args.zoom_token_max)
         if zoom_max is None:
@@ -589,6 +606,8 @@ def main() -> None:
         if zoom_min >= zoom_max:
             raise ValueError("Zoom token range is empty.")
 
+        zoom_ax = ax.inset_axes(_parse_inset_bounds(args.zoom_inset_bounds))
+        zoom_ax.set_facecolor("white")
         for curve in curves:
             keep = (curve.series.tokens >= zoom_min) & (curve.series.tokens <= zoom_max)
             if np.any(keep):
@@ -600,15 +619,21 @@ def main() -> None:
                     alpha=args.alpha,
                 )
 
-        _apply_axis_style(ax=zoom_ax, xlabel=args.xlabel, ylabel=f"Zoom {args.ylabel}", token_scale=token_scale)
+        _apply_axis_style(
+            ax=zoom_ax,
+            xlabel="",
+            ylabel="",
+            token_scale=token_scale,
+        )
         zoom_ax.set_xlim(zoom_min, zoom_max)
         if args.zoom_y_min is not None or args.zoom_y_max is not None:
             zoom_ax.set_ylim(args.zoom_y_min, args.zoom_y_max)
-        zoom_ax.set_title(
-            f"Tail zoom: {_format_tokens(zoom_min)} - {_format_tokens(zoom_max)} tokens"
-        )
-        zoom_ax.legend(loc="best", frameon=True)
-        ax.axvspan(zoom_min, zoom_max, color="#808080", alpha=0.10)
+        zoom_ax.set_title("Tail zoom", fontsize=10)
+        zoom_ax.tick_params(axis="both", labelsize=8)
+        for spine in zoom_ax.spines.values():
+            spine.set_edgecolor("#404040")
+            spine.set_linewidth(1.0)
+        ax.axvspan(zoom_min, zoom_max, color="#808080", alpha=0.10, zorder=0)
 
     out_path = Path(args.output).expanduser().resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
