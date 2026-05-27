@@ -19,7 +19,6 @@ Examples:
       --zoom \
       --zoom-fraction 0.25 \
       --zoom-inset-bounds 0.50,0.48,0.45,0.38 \
-      --save-pdf \
       --output model/loss_vs_tokens.png
 """
 
@@ -507,13 +506,13 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=str,
         default="model/loss_vs_tokens.png",
-        help="Output figure path.",
+        help="Output PNG figure path. A PDF is saved beside it by default.",
     )
     parser.add_argument("--dpi", type=int, default=180, help="Output DPI.")
     parser.add_argument(
         "--save-pdf",
         action="store_true",
-        help="Also save a PDF version.",
+        help="Deprecated; kept for compatibility. PDF is always saved.",
     )
     parser.add_argument(
         "--pdf-output",
@@ -635,25 +634,23 @@ def main() -> None:
             spine.set_linewidth(1.0)
         ax.axvspan(zoom_min, zoom_max, color="#808080", alpha=0.10, zorder=0)
 
-    out_path = Path(args.output).expanduser().resolve()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    png_path = Path(args.output).expanduser().resolve()
+    if png_path.suffix.lower() != ".png":
+        png_path = png_path.with_suffix(".png")
+    pdf_path = (
+        Path(args.pdf_output).expanduser().resolve()
+        if args.pdf_output.strip()
+        else png_path.with_suffix(".pdf")
+    )
+    png_path.parent.mkdir(parents=True, exist_ok=True)
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=args.dpi)
-
-    pdf_path = None
-    if args.save_pdf:
-        pdf_path = (
-            Path(args.pdf_output).expanduser().resolve()
-            if args.pdf_output.strip()
-            else out_path.with_suffix(".pdf")
-        )
-        pdf_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(pdf_path)
+    fig.savefig(png_path, dpi=args.dpi)
+    fig.savefig(pdf_path)
     plt.close(fig)
 
-    print(f"Saved figure to: {out_path}")
-    if pdf_path is not None:
-        print(f"Saved PDF to   : {pdf_path}")
+    print(f"Saved PNG to   : {png_path}")
+    print(f"Saved PDF to   : {pdf_path}")
     print(
         f"Token range   : {_format_tokens(selected_min)} - {_format_tokens(selected_max)}"
     )
