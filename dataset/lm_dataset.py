@@ -3,7 +3,8 @@ import torch
 import json
 import os
 import random
-from datasets import load_dataset, Features, Sequence, Value
+import numpy as np
+from datasets import load_dataset, load_from_disk, Features, Sequence, Value
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 def pre_processing_chat(conversations, add_system_ratio=0.2):
@@ -39,12 +40,58 @@ class PretrainDataset(Dataset):
         super().__init__()
         self.tokenizer = tokenizer
         self.max_length = max_length
-        self.samples = load_dataset('json', data_files=data_path, split='train')
+        self.data_path = data_path
+        self.packed = False
+        self._tokens = None
+        meta_path = os.path.join(data_path, "meta.json") if os.path.isdir(data_path) else ""
+        bin_path = os.path.join(data_path, "train.bin") if os.path.isdir(data_path) else ""
+        if meta_path and os.path.exists(meta_path) and os.path.exists(bin_path):
+            with open(meta_path, "r", encoding="utf-8") as f:
+                self.meta = json.load(f)
+            if self.meta.get("format") != "minimind_packed_pretrain":
+                raise ValueError(f"Unsupported packed dataset format: {self.meta.get('format')}")
+            self.packed = True
+            self.bin_path = bin_path
+            self.seq_len = int(self.meta["seq_len"])
+            self.num_sequences = int(self.meta["num_sequences"])
+            self.dtype = np.dtype(self.meta["dtype"])
+            self.pad_token_id = self.meta.get("pad_token_id", tokenizer.pad_token_id)
+            if self.seq_len != max_length:
+                raise ValueError(f"Packed dataset seq_len={self.seq_len}, but max_length={max_length}")
+            expected_items = self.num_sequences * self.seq_len
+            actual_items = os.path.getsize(self.bin_path) // self.dtype.itemsize
+            if actual_items != expected_items:
+                raise ValueError(f"Packed dataset size mismatch: expected {expected_items} tokens, found {actual_items}")
+        elif os.path.isdir(data_path):
+            self.samples = load_from_disk(data_path)
+        else:
+            self.samples = load_dataset('json', data_files=data_path, split='train')
+
+    @property
+    def tokens(self):
+        if self._tokens is None:
+            self._tokens = np.memmap(self.bin_path, dtype=self.dtype, mode="r")
+        return self._tokens
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state["_tokens"] = None
+        return state
 
     def __len__(self):
+        if self.packed:
+            return self.num_sequences
         return len(self.samples)
 
     def __getitem__(self, index):
+        if self.packed:
+            start = index * self.seq_len
+            end = start + self.seq_len
+            input_ids = torch.from_numpy(np.asarray(self.tokens[start:end], dtype=np.int64))
+            labels = input_ids.clone()
+            if self.pad_token_id is not None:
+                labels[input_ids == self.pad_token_id] = -100
+            return input_ids, labels
         sample = self.samples[index]
         tokens = self.tokenizer(str(sample['text']), add_special_tokens=False, max_length=self.max_length - 2, truncation=True).input_ids
         tokens = [self.tokenizer.bos_token_id] + tokens + [self.tokenizer.eos_token_id]

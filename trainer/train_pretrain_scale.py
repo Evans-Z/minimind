@@ -475,7 +475,7 @@ if __name__ == "__main__":
     parser.add_argument("--hc_balm_cost_scale", default=1.0, type=float, help="BALM代价缩放")
     parser.add_argument("--hc_overlap", default=0, type=int, choices=[0, 1], help="是否用CUDA side stream重叠mHC投影")
     parser.add_argument("--model_path", type=str, default="../model", help="Tokenizer/模型配置路径")
-    parser.add_argument("--data_path", type=str, default="../dataset/pretrain_t2t_mini.jsonl", help="预训练数据路径")
+    parser.add_argument("--data_path", type=str, default="../dataset/pretrain_t2t_mini.jsonl", help="预训练数据路径，支持JSONL或FineWeb-Edu packed目录")
     parser.add_argument("--from_weight", default="none", type=str, help="基于哪个权重训练")
     parser.add_argument("--from_resume", default=0, type=int, choices=[0, 1], help="是否自动检测并续训")
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
