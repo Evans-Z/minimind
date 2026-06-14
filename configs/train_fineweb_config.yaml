@@ -24,11 +24,11 @@ launch:
 
 run:
   save_weight: pretrain_fineweb100bt_dense7b
-  save_dir: /data/share/lixing/mhc/results
+  save_dir: /data/share/lixing/mhc/results/dense7b
   model_path: model
   data_path: /data/share/lixing/mhc/data/fineweb-edu-packed-100BT
-  tensorboard_logdir: runs/pretrain_fineweb100bt
-  tb_run_tag: fineweb100bt_dense7b
+  tensorboard_logdir: runs/pretrain_dense7b
+  tb_run_tag: dense7b_base
   resume: false
   use_wandb: false
   use_tensorboard: true
