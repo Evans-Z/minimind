@@ -1,4 +1,6 @@
 from torch.utils.data import Dataset
+import bisect
+import glob
 import torch
 import json
 import os
@@ -42,40 +44,65 @@ class PretrainDataset(Dataset):
         self.max_length = max_length
         self.data_path = data_path
         self.packed = False
-        self._tokens = None
+        self._token_shards = []
+        self.shards = []
+        self.cumulative_sequences = []
         meta_path = os.path.join(data_path, "meta.json") if os.path.isdir(data_path) else ""
         bin_path = os.path.join(data_path, "train.bin") if os.path.isdir(data_path) else ""
         if meta_path and os.path.exists(meta_path) and os.path.exists(bin_path):
-            with open(meta_path, "r", encoding="utf-8") as f:
-                self.meta = json.load(f)
-            if self.meta.get("format") != "minimind_packed_pretrain":
-                raise ValueError(f"Unsupported packed dataset format: {self.meta.get('format')}")
-            self.packed = True
-            self.bin_path = bin_path
-            self.seq_len = int(self.meta["seq_len"])
-            self.num_sequences = int(self.meta["num_sequences"])
-            self.dtype = np.dtype(self.meta["dtype"])
-            self.pad_token_id = self.meta.get("pad_token_id", tokenizer.pad_token_id)
-            if self.seq_len != max_length:
-                raise ValueError(f"Packed dataset seq_len={self.seq_len}, but max_length={max_length}")
-            expected_items = self.num_sequences * self.seq_len
-            actual_items = os.path.getsize(self.bin_path) // self.dtype.itemsize
-            if actual_items != expected_items:
-                raise ValueError(f"Packed dataset size mismatch: expected {expected_items} tokens, found {actual_items}")
+            self._load_packed(data_path, [meta_path], tokenizer, max_length)
+        elif os.path.isdir(data_path) and glob.glob(os.path.join(data_path, "meta_*_of_*.json")):
+            self._load_packed(data_path, glob.glob(os.path.join(data_path, "meta_*_of_*.json")), tokenizer, max_length)
         elif os.path.isdir(data_path):
             self.samples = load_from_disk(data_path)
         else:
             self.samples = load_dataset('json', data_files=data_path, split='train')
 
-    @property
-    def tokens(self):
-        if self._tokens is None:
-            self._tokens = np.memmap(self.bin_path, dtype=self.dtype, mode="r")
-        return self._tokens
+    def _load_packed(self, data_path, meta_paths, tokenizer, max_length):
+        total_sequences = 0
+        for meta_path in sorted(meta_paths):
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            if meta.get("format") != "minimind_packed_pretrain":
+                raise ValueError(f"Unsupported packed dataset format: {meta.get('format')}")
+
+            seq_len = int(meta["seq_len"])
+            dtype = np.dtype(meta["dtype"])
+            num_sequences = int(meta["num_sequences"])
+            bin_file = meta.get("bin_file", "train.bin")
+            bin_path = os.path.join(data_path, bin_file)
+            if seq_len != max_length:
+                raise ValueError(f"Packed dataset seq_len={seq_len}, but max_length={max_length}")
+            if not os.path.exists(bin_path):
+                raise FileNotFoundError(f"Packed dataset bin file not found: {bin_path}")
+            expected_items = num_sequences * seq_len
+            actual_items = os.path.getsize(bin_path) // dtype.itemsize
+            if actual_items != expected_items:
+                raise ValueError(f"Packed dataset size mismatch: expected {expected_items} tokens, found {actual_items}")
+
+            self.shards.append({"bin_path": bin_path, "num_sequences": num_sequences, "dtype": dtype})
+            self._token_shards.append(None)
+            total_sequences += num_sequences
+            self.cumulative_sequences.append(total_sequences)
+
+            if not self.packed:
+                self.meta = meta
+                self.seq_len = seq_len
+                self.dtype = dtype
+                self.pad_token_id = meta.get("pad_token_id", tokenizer.pad_token_id)
+                self.packed = True
+
+        self.num_sequences = total_sequences
+
+    def shard_tokens(self, shard_index):
+        if self._token_shards[shard_index] is None:
+            shard = self.shards[shard_index]
+            self._token_shards[shard_index] = np.memmap(shard["bin_path"], dtype=shard["dtype"], mode="r")
+        return self._token_shards[shard_index]
 
     def __getstate__(self):
         state = self.__dict__.copy()
-        state["_tokens"] = None
+        state["_token_shards"] = [None] * len(self._token_shards)
         return state
 
     def __len__(self):
@@ -85,9 +112,12 @@ class PretrainDataset(Dataset):
 
     def __getitem__(self, index):
         if self.packed:
-            start = index * self.seq_len
+            shard_index = bisect.bisect_right(self.cumulative_sequences, index)
+            previous_sequences = 0 if shard_index == 0 else self.cumulative_sequences[shard_index - 1]
+            local_index = index - previous_sequences
+            start = local_index * self.seq_len
             end = start + self.seq_len
-            input_ids = torch.from_numpy(np.asarray(self.tokens[start:end], dtype=np.int64))
+            input_ids = torch.from_numpy(np.asarray(self.shard_tokens(shard_index)[start:end], dtype=np.int64))
             labels = input_ids.clone()
             if self.pad_token_id is not None:
                 labels[input_ids == self.pad_token_id] = -100

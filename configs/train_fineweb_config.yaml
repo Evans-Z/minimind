@@ -1,0 +1,62 @@
+# Launcher-level config for scripts/launch_fineweb_pretrain_scale.sh
+# CLI flags override these values.
+#
+# Important:
+# - train.max_seq_len must match scripts/preprocess_fineweb_edu.py --seq-len.
+# - Do not set context_preset here; context presets override max_seq_len in
+#   trainer/train_pretrain_scale.py.
+
+presets:
+  yaml_path: configs/model_scale_presets.yaml
+  size_preset: dense_64m
+
+launch:
+  backend: fsdp2
+  # Leave empty to auto-detect from CUDA_VISIBLE_DEVICES or GPU count.
+  nproc_per_node:
+  nnodes: 1
+  node_rank: 0
+  master_addr: 127.0.0.1
+  master_port: 29500
+  # Example: "0,1,2,3,4,5,6,7"
+  cuda_visible_devices: "0,1,2,3,4,5,6,7"
+  dry_run: false
+
+run:
+  save_weight: pretrain_fineweb100bt
+  save_dir: /data/share/lixing/mhc/results
+  model_path: model
+  data_path: /data/share/lixing/mhc/data/fineweb-edu-packed-100BT
+  tensorboard_logdir: runs/pretrain_fineweb100bt
+  tb_run_tag: fineweb100bt
+  resume: false
+  use_wandb: false
+  use_tensorboard: true
+  use_compile: false
+
+train:
+  max_seq_len: 768
+  epochs: 1
+  batch_size: 32
+  accumulation_steps: 8
+  learning_rate: 5e-4
+  warmup_ratio: 0.01
+  min_lr_ratio: 0.1
+  num_workers: 8
+  log_interval: 100
+  save_interval: 1000
+  dtype: bfloat16
+  fsdp2_reshard_after_forward: 1
+
+  # Arbitrary trainer/train_pretrain_scale.py arg overrides.
+  # These are converted to CLI args as:
+  #   key: value -> --key value
+  #   key: true  -> --key
+  overrides:
+    # from_weight: none
+    # grad_clip: 1.0
+    # warmup_steps: 1000  # overrides warmup_ratio when > 0
+    # profile_steps: 8
+    # profile_dir: runs/profiler
+    # profile_memory: 1
+    # hc_overlap: 1
