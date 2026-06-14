@@ -37,10 +37,11 @@ run:
 train:
   max_seq_len: 768
   epochs: 1
-  # 8xH200 143GB has enough headroom for a larger per-GPU micro batch.
-  # effective tokens/update = 8 GPUs * 16 batch * 8 accum * 768 = 786,432.
-  batch_size: 16
-  accumulation_steps: 8
+  # 8xH200 143GB measured ~96GB/GPU at batch 16, so batch 24 should better
+  # utilize memory while keeping headroom for FSDP/compile fluctuations.
+  # effective tokens/update = 8 GPUs * 24 batch * 6 accum * 768 = 884,736.
+  batch_size: 24
+  accumulation_steps: 6
   learning_rate: 2e-4
   warmup_ratio: 0.01
   min_lr_ratio: 0.1
