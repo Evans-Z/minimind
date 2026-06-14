@@ -8,7 +8,7 @@
 
 presets:
   yaml_path: configs/model_scale_presets.yaml
-  size_preset: dense_64m
+  size_preset: dense_7b
 
 launch:
   backend: fsdp2
@@ -23,12 +23,12 @@ launch:
   dry_run: false
 
 run:
-  save_weight: pretrain_fineweb100bt
+  save_weight: pretrain_fineweb100bt_dense7b
   save_dir: /data/share/lixing/mhc/results
   model_path: model
   data_path: /data/share/lixing/mhc/data/fineweb-edu-packed-100BT
   tensorboard_logdir: runs/pretrain_fineweb100bt
-  tb_run_tag: fineweb100bt
+  tb_run_tag: fineweb100bt_dense7b
   resume: false
   use_wandb: false
   use_tensorboard: true
@@ -37,12 +37,14 @@ run:
 train:
   max_seq_len: 768
   epochs: 1
-  batch_size: 32
-  accumulation_steps: 8
-  learning_rate: 5e-4
+  # For 8xH200 143GB, start conservatively: per-GPU micro batch 8 and
+  # effective tokens/update = 8 GPUs * 8 batch * 16 accum * 768 = 786,432.
+  batch_size: 8
+  accumulation_steps: 16
+  learning_rate: 2e-4
   warmup_ratio: 0.01
   min_lr_ratio: 0.1
-  num_workers: 8
+  num_workers: 4
   log_interval: 100
   save_interval: 1000
   dtype: bfloat16
