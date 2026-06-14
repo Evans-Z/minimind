@@ -32,7 +32,7 @@ run:
   resume: false
   use_wandb: false
   use_tensorboard: true
-  use_compile: false
+  use_compile: true
 
 train:
   max_seq_len: 768
