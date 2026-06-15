@@ -181,6 +181,8 @@ def _apply_model_preset_overrides():
 
 
 def _save_checkpoint(epoch: int, step: int):
+    save_start = time.time()
+    _rank_log(f"Checkpoint start: epoch={epoch + 1}, step={step}", every_rank=True)
     raw_model = model
     model_state = None
     optim_state = None
@@ -207,12 +209,14 @@ def _save_checkpoint(epoch: int, step: int):
     if not is_main_process():
         del model_state, optim_state
         _distributed_barrier()
+        _rank_log(f"Checkpoint finished in {(time.time() - save_start):.1f}s", every_rank=True)
         return
 
     weight_tmp = save_paths["weight"] + ".tmp"
     resume_tmp = save_paths["resume"] + ".tmp"
     torch.save({k: v.half().cpu() for k, v in model_state.items()}, weight_tmp)
     os.replace(weight_tmp, save_paths["weight"])
+    _rank_log(f"Model weights saved in {(time.time() - save_start):.1f}s: {save_paths['weight']}")
 
     resume_data = {
         "model": model_state,
@@ -225,8 +229,10 @@ def _save_checkpoint(epoch: int, step: int):
     }
     torch.save(resume_data, resume_tmp)
     os.replace(resume_tmp, save_paths["resume"])
+    _rank_log(f"Resume checkpoint saved in {(time.time() - save_start):.1f}s: {save_paths['resume']}")
     if run_is_fsdp2:
         _distributed_barrier()
+    _rank_log(f"Checkpoint finished in {(time.time() - save_start):.1f}s", every_rank=True)
 
 
 def _load_resume():

@@ -49,6 +49,7 @@ MASTER_PORT="${MASTER_PORT:-29500}"
 NNODES="${NNODES:-1}"
 NODE_RANK="${NODE_RANK:-0}"
 CUDA_VISIBLE_DEVICES_OPT="${CUDA_VISIBLE_DEVICES_OPT:-}"
+DIST_TIMEOUT_SECONDS="${DIST_TIMEOUT_SECONDS:-1800}"
 
 RESUME=0
 USE_WANDB=0
@@ -99,6 +100,7 @@ emit("NODE_RANK", pick("launch", "node_rank"))
 emit("MASTER_ADDR", pick("launch", "master_addr"))
 emit("MASTER_PORT", pick("launch", "master_port"))
 emit("CUDA_VISIBLE_DEVICES_OPT", pick("launch", "cuda_visible_devices"))
+emit("DIST_TIMEOUT_SECONDS", pick("launch", "dist_timeout_seconds"))
 emit("DRY_RUN", pick("launch", "dry_run"))
 
 emit("DATA_PATH", pick("run", "data_path"))
@@ -163,6 +165,7 @@ Options:
   --node-rank <int>            Node rank
   --master-addr <addr>         Master address
   --master-port <port>         Master port
+  --dist-timeout-seconds <int> Distributed process-group timeout
   --cuda-visible-devices <ids> Set CUDA_VISIBLE_DEVICES, e.g. 0,1,2,3
 
   --data-path <path>           FineWeb packed directory
@@ -221,6 +224,7 @@ while [[ $# -gt 0 ]]; do
     --node-rank) NODE_RANK="$2"; shift 2 ;;
     --master-addr) MASTER_ADDR="$2"; shift 2 ;;
     --master-port) MASTER_PORT="$2"; shift 2 ;;
+    --dist-timeout-seconds) DIST_TIMEOUT_SECONDS="$2"; shift 2 ;;
     --cuda-visible-devices) CUDA_VISIBLE_DEVICES_OPT="$2"; shift 2 ;;
     --data-path) DATA_PATH="$2"; shift 2 ;;
     --model-path) MODEL_PATH="$2"; shift 2 ;;
@@ -295,6 +299,7 @@ if [[ "$NNODES" -eq 1 ]]; then
   export NCCL_NVLS_ENABLE="${NCCL_NVLS_ENABLE:-0}"
   export NCCL_MNNVL_ENABLE="${NCCL_MNNVL_ENABLE:-0}"
 fi
+export MINIMIND_DIST_TIMEOUT_SECONDS="$DIST_TIMEOUT_SECONDS"
 
 TRAIN_ARGS=(
   "$SCRIPT_PATH"
@@ -366,6 +371,7 @@ echo "max_seq_len:        $MAX_SEQ_LEN"
 echo "nproc_per_node:     $NPROC_PER_NODE"
 echo "nnodes/node_rank:   $NNODES/$NODE_RANK"
 echo "master:             $MASTER_ADDR:$MASTER_PORT"
+echo "dist_timeout_sec:   $MINIMIND_DIST_TIMEOUT_SECONDS"
 echo "resume:             $RESUME"
 echo "wandb:              $USE_WANDB"
 echo "tensorboard:        $USE_TENSORBOARD"

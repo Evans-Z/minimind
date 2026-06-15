@@ -18,6 +18,9 @@ launch:
   node_rank: 0
   master_addr: 127.0.0.1
   master_port: 29500
+  # 7B checkpoints can take several minutes; keep NCCL watchdog from firing
+  # while non-main ranks wait at the checkpoint barrier.
+  dist_timeout_seconds: 1800
   # Example: "0,1,2,3,4,5,6,7"
   cuda_visible_devices: "0,1,2,3,4,5,6,7"
   dry_run: false
@@ -47,7 +50,7 @@ train:
   min_lr_ratio: 0.1
   num_workers: 4
   log_interval: 100
-  save_interval: 1000
+  save_interval: 5000
   dtype: bfloat16
   fsdp2_reshard_after_forward: 1
 
