@@ -52,10 +52,10 @@ class HyperConnection(nn.Module):
             raise ValueError(f"hc_balm_r must be positive, got {self.hc_balm_r}")
         if self.hc_balm_delta <= 0:
             raise ValueError(f"hc_balm_delta must be positive, got {self.hc_balm_delta}")
-        if self.hc_balm_diag_cost < 0:
-            raise ValueError(f"hc_balm_diag_cost must be non-negative, got {self.hc_balm_diag_cost}")
-        if self.hc_balm_offdiag_cost < 0:
-            raise ValueError(f"hc_balm_offdiag_cost must be non-negative, got {self.hc_balm_offdiag_cost}")
+        # if self.hc_balm_diag_cost < 0:
+        #     raise ValueError(f"hc_balm_diag_cost must be non-negative, got {self.hc_balm_diag_cost}")
+        # if self.hc_balm_offdiag_cost < 0:
+        #     raise ValueError(f"hc_balm_offdiag_cost must be non-negative, got {self.hc_balm_offdiag_cost}")
         if self.hc_balm_cost_scale < 0:
             raise ValueError(f"hc_balm_cost_scale must be non-negative, got {self.hc_balm_cost_scale}")
 
