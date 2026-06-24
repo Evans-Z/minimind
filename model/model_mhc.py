@@ -139,8 +139,7 @@ class HyperConnection(nn.Module):
 
     def _project_comb_balm(self, comb: torch.Tensor) -> torch.Tensor:
         hc = self.hc_mult
-        comb_0 = comb.clone()
-        linear_cost = -0.5 * comb_0
+        linear_cost = -0.05 * comb.detach()
         # linear_cost = self.linear_cost.to(device=comb.device, dtype=comb.dtype)
         hc_balm_r = torch.tensor(self.hc_balm_r, device=comb.device, dtype=comb.dtype)
         balm_step = hc_balm_r / (self.hc_mult + self.hc_balm_delta)
