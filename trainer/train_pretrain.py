@@ -21,6 +21,17 @@ from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint
 warnings.filterwarnings('ignore')
 
 
+def _get_mhc_scalar_mean(model, attr_name):
+    raw_model = model.module if isinstance(model, DistributedDataParallel) else model
+    raw_model = getattr(raw_model, '_orig_mod', raw_model)
+    values = []
+    for module in raw_model.modules():
+        value = getattr(module, attr_name, None)
+        if value is not None:
+            values.append(float(value.detach().float().item()))
+    return sum(values) / len(values) if values else None
+
+
 def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
     start_time = time.time()
     last_step = start_step
@@ -65,6 +76,16 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
                 tb_writer.add_scalar("train/logits_loss", current_logits_loss, global_step)
                 tb_writer.add_scalar("train/aux_loss", current_aux_loss, global_step)
                 tb_writer.add_scalar("train/lr", current_lr, global_step)
+                comb_base_mix_ratio = _get_mhc_scalar_mean(model, "last_comb_base_mix_ratio")
+                if comb_base_mix_ratio is not None:
+                    tb_writer.add_scalar("mhc/comb_base_mix_ratio", comb_base_mix_ratio, global_step)
+                identity_mae = _get_mhc_scalar_mean(model, "last_projected_comb_identity_mae")
+                diag_mean = _get_mhc_scalar_mean(model, "last_projected_comb_diag_mean")
+                offdiag_mean = _get_mhc_scalar_mean(model, "last_projected_comb_offdiag_mean")
+                if identity_mae is not None:
+                    tb_writer.add_scalar("mhc/projected_comb_identity_mae", identity_mae, global_step)
+                    tb_writer.add_scalar("mhc/projected_comb_diag_mean", diag_mean, global_step)
+                    tb_writer.add_scalar("mhc/projected_comb_offdiag_mean", offdiag_mean, global_step)
                 if last_grad_norm is not None:
                     tb_writer.add_scalar("train/grad_norm", last_grad_norm, global_step)
 

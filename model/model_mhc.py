@@ -106,6 +106,10 @@ class HyperConnection(nn.Module):
         # H×H residual combine matrix that gets Sinkhorn-projected onto the
         # doubly-stochastic manifold). Each output gets its own learned scale.
         self.scale = nn.Parameter(torch.empty(3))
+        self.last_comb_base_mix_ratio = None
+        self.last_projected_comb_identity_mae = None
+        self.last_projected_comb_diag_mean = None
+        self.last_projected_comb_offdiag_mean = None
         
         self.init_weights()
     
@@ -184,13 +188,27 @@ class HyperConnection(nn.Module):
         _, post_scale, comb_scale = self.scale.unbind(0)
         hc = self.hc_mult
         post = torch.sigmoid(mix[..., hc:2*hc] * post_scale + self.base[hc:2*hc]) + self.hc_eps
+        comb_mix = mix[..., 2*hc:].view(*mix.shape[:-1], hc, hc) * comb_scale
+        comb_base = self.base[2*hc:].view(hc, hc)
+        with torch.no_grad():
+            self.last_comb_base_mix_ratio = (
+                comb_base.detach().abs().mean()
+                / comb_mix.detach().abs().mean().clamp_min(1e-8)
+            )
         comb = (
             torch.sigmoid(
-                mix[..., 2*hc:].view(*mix.shape[:-1], hc, hc) * comb_scale + self.base[2*hc:].view(hc, hc)
+                comb_mix + comb_base
             )
             + self.hc_eps
         )
-        return post, self._project_comb(comb)
+        projected_comb = self._project_comb(comb)
+        with torch.no_grad():
+            eye = torch.eye(hc, device=projected_comb.device, dtype=projected_comb.dtype)
+            offdiag_mask = ~torch.eye(hc, device=projected_comb.device, dtype=torch.bool)
+            self.last_projected_comb_identity_mae = (projected_comb.detach() - eye).abs().mean()
+            self.last_projected_comb_diag_mean = projected_comb.detach().diagonal(dim1=-2, dim2=-1).mean()
+            self.last_projected_comb_offdiag_mean = projected_comb.detach()[..., offdiag_mask].mean()
+        return post, projected_comb
 
     def forward(self, hidden_streams: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         r"""

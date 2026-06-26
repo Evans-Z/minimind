@@ -95,6 +95,17 @@ def _num_update_steps(num_micro_steps: int) -> int:
     return max(1, (num_micro_steps + args.accumulation_steps - 1) // args.accumulation_steps)
 
 
+def _get_mhc_scalar_mean(model, attr_name):
+    raw_model = model.module if isinstance(model, DistributedDataParallel) else model
+    raw_model = getattr(raw_model, "_orig_mod", raw_model)
+    values = []
+    for module in raw_model.modules():
+        value = getattr(module, attr_name, None)
+        if value is not None:
+            values.append(float(value.detach().float().item()))
+    return sum(values) / len(values) if values else None
+
+
 def _resolve_warmup_steps(total_update_steps: int) -> int:
     if args.warmup_steps > 0:
         return min(args.warmup_steps, total_update_steps)
@@ -357,6 +368,20 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
                 tb_writer.add_scalar("train_by_tokens/loss", current_loss, global_tokens)
                 tb_writer.add_scalar("train_by_tokens/logits_loss", current_logits_loss, global_tokens)
                 tb_writer.add_scalar("train_by_tokens/aux_loss", current_aux_loss, global_tokens)
+                comb_base_mix_ratio = _get_mhc_scalar_mean(model, "last_comb_base_mix_ratio")
+                if comb_base_mix_ratio is not None:
+                    tb_writer.add_scalar("mhc/comb_base_mix_ratio", comb_base_mix_ratio, global_step)
+                    tb_writer.add_scalar("mhc_by_tokens/comb_base_mix_ratio", comb_base_mix_ratio, global_tokens)
+                identity_mae = _get_mhc_scalar_mean(model, "last_projected_comb_identity_mae")
+                diag_mean = _get_mhc_scalar_mean(model, "last_projected_comb_diag_mean")
+                offdiag_mean = _get_mhc_scalar_mean(model, "last_projected_comb_offdiag_mean")
+                if identity_mae is not None:
+                    tb_writer.add_scalar("mhc/projected_comb_identity_mae", identity_mae, global_step)
+                    tb_writer.add_scalar("mhc/projected_comb_diag_mean", diag_mean, global_step)
+                    tb_writer.add_scalar("mhc/projected_comb_offdiag_mean", offdiag_mean, global_step)
+                    tb_writer.add_scalar("mhc_by_tokens/projected_comb_identity_mae", identity_mae, global_tokens)
+                    tb_writer.add_scalar("mhc_by_tokens/projected_comb_diag_mean", diag_mean, global_tokens)
+                    tb_writer.add_scalar("mhc_by_tokens/projected_comb_offdiag_mean", offdiag_mean, global_tokens)
                 if last_grad_norm is not None:
                     tb_writer.add_scalar("train/grad_norm", last_grad_norm, global_step)
                     tb_writer.add_scalar("train_by_tokens/grad_norm", last_grad_norm, global_tokens)
