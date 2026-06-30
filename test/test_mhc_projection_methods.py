@@ -33,7 +33,14 @@ class ProjectionMetrics:
     grad_mean_abs: float | None
 
 
-def _build_connection(projector: str, hc_mult: int, hidden_size: int, iters: int, eps: float) -> HyperConnection:
+def _build_connection(
+    projector: str,
+    hc_mult: int,
+    hidden_size: int,
+    iters: int,
+    eps: float,
+    balm_r: float,
+) -> HyperConnection:
     return HyperConnection(
         hc_mult=hc_mult,
         hidden_size=hidden_size,
@@ -41,6 +48,7 @@ def _build_connection(projector: str, hc_mult: int, hidden_size: int, iters: int
         hc_eps=eps,
         rms_norm_eps=1e-6,
         hc_projector=projector,
+        hc_balm_r=balm_r,
     )
 
 
@@ -78,8 +86,8 @@ def _active_entries_mean(matrix: torch.Tensor, threshold: float = 1e-8) -> torch
     return (matrix.abs() > threshold).to(torch.float32).sum(dim=(-2, -1)).mean()
 
 
-def _project(projector: str, comb: torch.Tensor, *, iters: int, eps: float) -> torch.Tensor:
-    connection = _build_connection(projector, comb.shape[-1], hidden_size=8, iters=iters, eps=eps)
+def _project(projector: str, comb: torch.Tensor, *, iters: int, eps: float, balm_r: float) -> torch.Tensor:
+    connection = _build_connection(projector, comb.shape[-1], hidden_size=8, iters=iters, eps=eps, balm_r=balm_r)
     if projector == "sinkhorn":
         return connection._project_comb_sinkhorn(comb)
     if projector == "balm":
@@ -87,9 +95,9 @@ def _project(projector: str, comb: torch.Tensor, *, iters: int, eps: float) -> t
     raise ValueError(f"Unsupported projector: {projector}")
 
 
-def _gradient_mean_abs(projector: str, comb: torch.Tensor, *, iters: int, eps: float) -> float | None:
+def _gradient_mean_abs(projector: str, comb: torch.Tensor, *, iters: int, eps: float, balm_r: float) -> float | None:
     work = comb.detach().clone().requires_grad_(True)
-    projected = _project(projector, work, iters=iters, eps=eps)
+    projected = _project(projector, work, iters=iters, eps=eps, balm_r=balm_r)
     if not projected.requires_grad:
         return None
 
@@ -99,9 +107,9 @@ def _gradient_mean_abs(projector: str, comb: torch.Tensor, *, iters: int, eps: f
     return work.grad.abs().mean().item()
 
 
-def _metrics(projector: str, name: str, comb: torch.Tensor, *, iters: int, eps: float) -> ProjectionMetrics:
+def _metrics(projector: str, name: str, comb: torch.Tensor, *, iters: int, eps: float, balm_r: float) -> ProjectionMetrics:
     with torch.no_grad():
-        projected = _project(projector, comb.detach().clone(), iters=iters, eps=eps)
+        projected = _project(projector, comb.detach().clone(), iters=iters, eps=eps, balm_r=balm_r)
         hc_mult = projected.shape[-1]
         row_err = projected.sum(dim=-1) - 1.0
         col_err = projected.sum(dim=-2) - 1.0
@@ -126,7 +134,7 @@ def _metrics(projector: str, name: str, comb: torch.Tensor, *, iters: int, eps: 
 
     return ProjectionMetrics(
         name=f"{name}/{projector}",
-        grad_mean_abs=_gradient_mean_abs(projector, comb, iters=iters, eps=eps),
+        grad_mean_abs=_gradient_mean_abs(projector, comb, iters=iters, eps=eps, balm_r=balm_r),
         **metrics,
     )
 
@@ -140,6 +148,7 @@ def collect_projection_metrics(
     device: str = "cpu",
     dtype: torch.dtype = torch.float32,
     batch_shape: tuple[int, ...] = (2, 3),
+    balm_r: float = 1.0,
 ) -> list[ProjectionMetrics]:
     torch.manual_seed(seed)
     cases = _make_cases(hc_mult, batch_shape=batch_shape, device=device, dtype=dtype)
@@ -147,7 +156,7 @@ def collect_projection_metrics(
     metrics = []
     for case_name, comb in cases.items():
         for projector in ("sinkhorn", "balm"):
-            metrics.append(_metrics(projector, case_name, comb, iters=iters, eps=eps))
+            metrics.append(_metrics(projector, case_name, comb, iters=iters, eps=eps, balm_r=balm_r))
     return metrics
 
 
@@ -207,14 +216,15 @@ def print_projection_matrices(
     seed: int,
     device: str,
     dtype: torch.dtype = torch.float32,
+    balm_r: float = 1.0,
 ) -> None:
     torch.manual_seed(seed)
     cases = _make_cases(hc_mult, batch_shape=(), device=device, dtype=dtype)
 
     torch.set_printoptions(precision=4, sci_mode=False, linewidth=120)
     for case_name, comb in cases.items():
-        sinkhorn = _project("sinkhorn", comb.detach().clone(), iters=iters, eps=eps)
-        balm = _project("balm", comb.detach().clone(), iters=iters, eps=eps)
+        sinkhorn = _project("sinkhorn", comb.detach().clone(), iters=iters, eps=eps, balm_r=balm_r)
+        balm = _project("balm", comb.detach().clone(), iters=iters, eps=eps, balm_r=balm_r)
 
         print(f"\n[{case_name}] input comb")
         print(comb)
@@ -277,6 +287,7 @@ def main() -> None:
     parser.add_argument("--eps", type=float, default=1e-6)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--balm-r", type=float, default=4.0)
     args = parser.parse_args()
 
     metrics = collect_projection_metrics(
@@ -286,6 +297,7 @@ def main() -> None:
         seed=args.seed,
         device=args.device,
         batch_shape=(),
+        balm_r=args.balm_r,
     )
     print_projection_matrices(
         hc_mult=args.hc_mult,
@@ -293,6 +305,7 @@ def main() -> None:
         eps=args.eps,
         seed=args.seed,
         device=args.device,
+        balm_r=args.balm_r,
     )
     print("\nSummary metrics")
     print_projection_report(metrics)

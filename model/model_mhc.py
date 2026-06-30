@@ -148,7 +148,7 @@ class HyperConnection(nn.Module):
     def _project_comb_balm(self, comb: torch.Tensor) -> torch.Tensor:
         # return 1.02 * torch.eye(self.hc_mult, device=comb.device, dtype=comb.dtype).expand_as(comb)
         hc = self.hc_mult
-        linear_cost = -1.0 * comb.detach()
+        linear_cost = -1.0 * comb
         # linear_cost = self.linear_cost.to(device=comb.device, dtype=comb.dtype)
         hc_balm_r = torch.tensor(self.hc_balm_r, device=comb.device, dtype=comb.dtype)
         balm_step = hc_balm_r / (self.hc_mult + self.hc_balm_delta)
@@ -176,8 +176,8 @@ class HyperConnection(nn.Module):
 
         # One Sinkhorn polish step preserves BALM's sparse support while reducing
         # finite-iteration row/column mass drift.
-        comb = comb / (comb.sum(dim=-1, keepdim=True) + self.hc_eps)
-        comb = comb / (comb.sum(dim=-2, keepdim=True) + self.hc_eps)
+        # comb = comb / (comb.sum(dim=-1, keepdim=True) + self.hc_eps)
+        # comb = comb / (comb.sum(dim=-2, keepdim=True) + self.hc_eps)
         return comb
 
     def compute_mix(self, hidden_streams: torch.Tensor) -> torch.Tensor:
