@@ -379,6 +379,7 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
                 col_sum_mean = _get_mhc_scalar_mean(model, "last_projected_comb_col_sum_mean")
                 row_residual_mae = _get_mhc_scalar_mean(model, "last_projected_comb_row_residual_mae")
                 col_residual_mae = _get_mhc_scalar_mean(model, "last_projected_comb_col_residual_mae")
+                nonzero_ratio = _get_mhc_scalar_mean(model, "last_projected_comb_nonzero_ratio")
                 if identity_mae is not None:
                     tb_writer.add_scalar("mhc/projected_comb_identity_mae", identity_mae, global_step)
                     tb_writer.add_scalar("mhc/projected_comb_diag_mean", diag_mean, global_step)
@@ -387,6 +388,7 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
                     tb_writer.add_scalar("mhc/projected_comb_col_sum_mean", col_sum_mean, global_step)
                     tb_writer.add_scalar("mhc/projected_comb_row_residual_mae", row_residual_mae, global_step)
                     tb_writer.add_scalar("mhc/projected_comb_col_residual_mae", col_residual_mae, global_step)
+                    tb_writer.add_scalar("mhc/projected_comb_nonzero_ratio", nonzero_ratio, global_step)
                     tb_writer.add_scalar("mhc_by_tokens/projected_comb_identity_mae", identity_mae, global_tokens)
                     tb_writer.add_scalar("mhc_by_tokens/projected_comb_diag_mean", diag_mean, global_tokens)
                     tb_writer.add_scalar("mhc_by_tokens/projected_comb_offdiag_mean", offdiag_mean, global_tokens)
@@ -394,6 +396,7 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
                     tb_writer.add_scalar("mhc_by_tokens/projected_comb_col_sum_mean", col_sum_mean, global_tokens)
                     tb_writer.add_scalar("mhc_by_tokens/projected_comb_row_residual_mae", row_residual_mae, global_tokens)
                     tb_writer.add_scalar("mhc_by_tokens/projected_comb_col_residual_mae", col_residual_mae, global_tokens)
+                    tb_writer.add_scalar("mhc_by_tokens/projected_comb_nonzero_ratio", nonzero_ratio, global_tokens)
                 if last_grad_norm is not None:
                     tb_writer.add_scalar("train/grad_norm", last_grad_norm, global_step)
                     tb_writer.add_scalar("train_by_tokens/grad_norm", last_grad_norm, global_tokens)

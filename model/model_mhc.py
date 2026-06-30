@@ -114,6 +114,7 @@ class HyperConnection(nn.Module):
         self.last_projected_comb_col_sum_mean = None
         self.last_projected_comb_row_residual_mae = None
         self.last_projected_comb_col_residual_mae = None
+        self.last_projected_comb_nonzero_ratio = None
         
         self.init_weights()
     
@@ -223,6 +224,9 @@ class HyperConnection(nn.Module):
             self.last_projected_comb_col_sum_mean = projected_col_sum.mean()
             self.last_projected_comb_row_residual_mae = (projected_row_sum - 1.0).abs().mean()
             self.last_projected_comb_col_residual_mae = (projected_col_sum - 1.0).abs().mean()
+            self.last_projected_comb_nonzero_ratio = (
+                projected_comb.detach().abs() > 1e-8
+            ).to(torch.float32).mean()
         return post, projected_comb
 
     def forward(self, hidden_streams: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
