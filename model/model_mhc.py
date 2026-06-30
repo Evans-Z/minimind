@@ -142,7 +142,7 @@ class HyperConnection(nn.Module):
         return comb
 
     def _project_comb_balm(self, comb: torch.Tensor) -> torch.Tensor:
-        return 1.1 * torch.eye(self.hc_mult, device=comb.device, dtype=comb.dtype).expand_as(comb)
+        return 1.02 * torch.eye(self.hc_mult, device=comb.device, dtype=comb.dtype).expand_as(comb)
         # hc = self.hc_mult
         # linear_cost = -0.05 * comb.detach()
         # # linear_cost = self.linear_cost.to(device=comb.device, dtype=comb.dtype)
