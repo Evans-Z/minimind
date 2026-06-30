@@ -110,6 +110,10 @@ class HyperConnection(nn.Module):
         self.last_projected_comb_identity_mae = None
         self.last_projected_comb_diag_mean = None
         self.last_projected_comb_offdiag_mean = None
+        self.last_projected_comb_row_sum_mean = None
+        self.last_projected_comb_col_sum_mean = None
+        self.last_projected_comb_row_residual_mae = None
+        self.last_projected_comb_col_residual_mae = None
         
         self.init_weights()
     
@@ -210,9 +214,15 @@ class HyperConnection(nn.Module):
         with torch.no_grad():
             eye = torch.eye(hc, device=projected_comb.device, dtype=projected_comb.dtype)
             offdiag_mask = ~torch.eye(hc, device=projected_comb.device, dtype=torch.bool)
+            projected_row_sum = projected_comb.detach().sum(dim=-1)
+            projected_col_sum = projected_comb.detach().sum(dim=-2)
             self.last_projected_comb_identity_mae = (projected_comb.detach() - eye).abs().mean()
             self.last_projected_comb_diag_mean = projected_comb.detach().diagonal(dim1=-2, dim2=-1).mean()
             self.last_projected_comb_offdiag_mean = projected_comb.detach()[..., offdiag_mask].mean()
+            self.last_projected_comb_row_sum_mean = projected_row_sum.mean()
+            self.last_projected_comb_col_sum_mean = projected_col_sum.mean()
+            self.last_projected_comb_row_residual_mae = (projected_row_sum - 1.0).abs().mean()
+            self.last_projected_comb_col_residual_mae = (projected_col_sum - 1.0).abs().mean()
         return post, projected_comb
 
     def forward(self, hidden_streams: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
