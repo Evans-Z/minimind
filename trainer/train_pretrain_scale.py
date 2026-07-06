@@ -91,8 +91,24 @@ def _estimate_global_tokens(epoch: int, iters: int, step: int) -> int:
     return int((epoch * iters + step) * args.batch_size * world_size * args.max_seq_len)
 
 
+def _tokens_per_micro_step() -> int:
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    return int(args.batch_size * world_size * args.max_seq_len)
+
+
+def _num_micro_steps_for_tokens(num_tokens: int) -> int:
+    tokens_per_micro_step = max(_tokens_per_micro_step(), 1)
+    return max(1, (int(num_tokens) + tokens_per_micro_step - 1) // tokens_per_micro_step)
+
+
 def _num_update_steps(num_micro_steps: int) -> int:
     return max(1, (num_micro_steps + args.accumulation_steps - 1) // args.accumulation_steps)
+
+
+def _resolve_total_update_steps(num_micro_steps: int) -> int:
+    if args.max_train_tokens > 0:
+        return _num_update_steps(_num_micro_steps_for_tokens(args.max_train_tokens))
+    return _num_update_steps(num_micro_steps)
 
 
 def _get_mhc_scalar_mean(model, attr_name):
@@ -285,7 +301,7 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
     world_size = dist.get_world_size() if dist.is_initialized() else 1
     last_step = start_step
     last_grad_norm = None
-    total_update_steps = _num_update_steps(args.epochs * iters)
+    total_update_steps = _resolve_total_update_steps(args.epochs * iters)
     warmup_steps = _resolve_warmup_steps(total_update_steps)
     for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
         input_ids = input_ids.to(args.device, non_blocking=True)
@@ -420,6 +436,10 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
 
         del input_ids, labels, res, loss
 
+        if args.max_train_tokens > 0 and _estimate_global_tokens(epoch, iters, step) >= args.max_train_tokens:
+            Logger(f"Reached max_train_tokens={args.max_train_tokens}; stopping training.")
+            break
+
     if last_step > start_step and last_step % args.accumulation_steps != 0:
         scaler.unscale_(optimizer)
         grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
@@ -427,6 +447,8 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, tb_writer=None):
         scaler.step(optimizer)
         scaler.update()
         optimizer.zero_grad(set_to_none=True)
+
+    return args.max_train_tokens > 0 and _estimate_global_tokens(epoch, iters, last_step) >= args.max_train_tokens
 
 
 def _build_config():
@@ -493,6 +515,7 @@ if __name__ == "__main__":
         help="YAML中的上下文preset名称（来自context_presets）",
     )
     parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
+    parser.add_argument("--max_train_tokens", type=int, default=0, help="最大训练token数；>0时用于LR总步数并达到后停止")
     parser.add_argument("--batch_size", type=int, default=32, help="batch size")
     parser.add_argument("--learning_rate", type=float, default=5e-4, help="初始学习率")
     parser.add_argument("--warmup_steps", type=int, default=0, help="线性warmup的optimizer step数量；优先于warmup_ratio")
@@ -558,6 +581,8 @@ if __name__ == "__main__":
         )
     if args.warmup_steps < 0:
         raise ValueError("--warmup_steps must be non-negative")
+    if args.max_train_tokens < 0:
+        raise ValueError("--max_train_tokens must be non-negative")
     if not 0.0 <= args.warmup_ratio <= 1.0:
         raise ValueError("--warmup_ratio must be in [0, 1]")
     if not 0.0 <= args.min_lr_ratio <= 1.0:
@@ -614,6 +639,12 @@ if __name__ == "__main__":
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
     scaler = torch.cuda.amp.GradScaler(enabled=(args.dtype == "float16"))
     Logger(f"Dataset loaded: {len(train_ds)} samples, max_seq_len={args.max_seq_len}")
+    if args.max_train_tokens > 0:
+        Logger(
+            f"Token budget enabled: max_train_tokens={args.max_train_tokens}, "
+            f"tokens_per_micro_step={_tokens_per_micro_step()}, "
+            f"lr_total_update_steps={_resolve_total_update_steps(args.epochs * len(train_ds))}"
+        )
 
     if args.use_compile == 1:
         model = torch.compile(model)
@@ -684,9 +715,11 @@ if __name__ == "__main__":
         Logger(f"Dataloader ready: epoch {epoch + 1}, steps={len(loader)}")
         if skip > 0:
             Logger(f"Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始")
-            train_epoch(epoch, loader, len(loader) + skip, start_step, wandb, tb_writer)
+            should_stop = train_epoch(epoch, loader, len(loader) + skip, start_step, wandb, tb_writer)
         else:
-            train_epoch(epoch, loader, len(loader), 0, wandb, tb_writer)
+            should_stop = train_epoch(epoch, loader, len(loader), 0, wandb, tb_writer)
+        if should_stop:
+            break
 
     if tb_writer:
         tb_writer.close()
