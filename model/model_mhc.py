@@ -149,7 +149,7 @@ class HyperConnection(nn.Module):
     def _project_comb_balm(self, comb: torch.Tensor) -> torch.Tensor:
         # return 1.02 * torch.eye(self.hc_mult, device=comb.device, dtype=comb.dtype).expand_as(comb)
         hc = self.hc_mult
-        linear_cost = -16.0 * comb.detach()
+        linear_cost = -0.1 * comb.detach()
         # linear_cost = self.linear_cost.to(device=comb.device, dtype=comb.dtype)
         hc_balm_r = torch.tensor(self.hc_balm_r, device=comb.device, dtype=comb.dtype)
         balm_step = hc_balm_r / (self.hc_mult + self.hc_balm_delta)
@@ -180,7 +180,7 @@ class HyperConnection(nn.Module):
         # comb = comb / (comb.sum(dim=-1, keepdim=True) + self.hc_eps)
         # comb = comb / (comb.sum(dim=-2, keepdim=True) + self.hc_eps)
 
-        return comb * 1.1
+        return comb * 1.005
 
     def compute_mix(self, hidden_streams: torch.Tensor) -> torch.Tensor:
         flat = self.input_norm(hidden_streams.flatten(start_dim=2).float())
