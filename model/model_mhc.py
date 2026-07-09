@@ -179,6 +179,7 @@ class HyperConnection(nn.Module):
         # finite-iteration row/column mass drift.
         # comb = comb / (comb.sum(dim=-1, keepdim=True) + self.hc_eps)
         # comb = comb / (comb.sum(dim=-2, keepdim=True) + self.hc_eps)
+        comb *= 1.1
         return comb
 
     def compute_mix(self, hidden_streams: torch.Tensor) -> torch.Tensor:
