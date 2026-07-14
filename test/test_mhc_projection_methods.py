@@ -287,7 +287,7 @@ def main() -> None:
     parser.add_argument("--eps", type=float, default=1e-6)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cpu")
-    parser.add_argument("--balm-r", type=float, default=4.0)
+    parser.add_argument("--balm-r", type=float, default=2.0)
     args = parser.parse_args()
 
     metrics = collect_projection_metrics(

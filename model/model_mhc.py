@@ -115,6 +115,12 @@ class HyperConnection(nn.Module):
         self.last_projected_comb_row_residual_mae = None
         self.last_projected_comb_col_residual_mae = None
         self.last_projected_comb_nonzero_ratio = None
+
+        comb_scale_init = 1.1
+        comb_scale_max = 0.2
+        self.comb_scale_max = comb_scale_max
+        p = (comb_scale_init - 1.0) / comb_scale_max
+        self.comb_scale = nn.Parameter(torch.logit(torch.full((1,), p)))
         
         self.init_weights()
     
@@ -146,41 +152,72 @@ class HyperConnection(nn.Module):
             comb = comb / (comb.sum(dim=-2, keepdim=True) + self.hc_eps)
         return comb
 
+    # def _project_comb_balm(self, comb: torch.Tensor) -> torch.Tensor:
+    #     # return 1.02 * torch.eye(self.hc_mult, device=comb.device, dtype=comb.dtype).expand_as(comb)
+    #     hc = self.hc_mult
+    #     linear_cost = -0.1 * comb.detach()
+    #     # linear_cost = self.linear_cost.to(device=comb.device, dtype=comb.dtype)
+    #     hc_balm_r = torch.tensor(self.hc_balm_r, device=comb.device, dtype=comb.dtype)
+    #     balm_step = hc_balm_r / (self.hc_mult + self.hc_balm_delta)
+    #     inv_r = 1.0 / hc_balm_r
+    #     y = torch.zeros(*comb.shape[:-2], 2 * hc, device=comb.device, dtype=comb.dtype)
+    #     comb_row_sum = comb.sum(dim=-1)
+    #     comb_col_sum = comb.sum(dim=-2)
+    #     for _ in range(self.hc_iters):
+    #         u = y[..., :hc]
+    #         v = y[..., hc:]
+    #         at_y = u.unsqueeze(-1) + v.unsqueeze(-2)
+    #         q = comb + (at_y - linear_cost) * inv_r
+    #         comb_next = torch.clamp(q, min=0.0)
+    #         comb_next_row_sum = comb_next.sum(dim=-1)
+    #         comb_next_col_sum = comb_next.sum(dim=-2)
+    #         row_sum = 2.0 * comb_next_row_sum - comb_row_sum
+    #         col_sum = 2.0 * comb_next_col_sum - comb_col_sum
+    #         z = (row_sum.sum(dim=-1) - hc) * self.inv_z_denom
+    #         z_expand = z.unsqueeze(-1)
+    #         y[..., :hc].sub_(balm_step * (row_sum - 1.0 - z_expand))
+    #         y[..., hc:].sub_(balm_step * (col_sum - 1.0 - z_expand))
+    #         comb = comb_next
+    #         comb_row_sum = comb_next_row_sum
+    #         comb_col_sum = comb_next_col_sum
+
+    #     # One Sinkhorn polish step preserves BALM's sparse support while reducing
+    #     # finite-iteration row/column mass drift.
+    #     # comb = comb / (comb.sum(dim=-1, keepdim=True) + self.hc_eps)
+    #     # comb = comb / (comb.sum(dim=-2, keepdim=True) + self.hc_eps)
+
+    #     return comb * 1.005
+
     def _project_comb_balm(self, comb: torch.Tensor) -> torch.Tensor:
-        # return 1.02 * torch.eye(self.hc_mult, device=comb.device, dtype=comb.dtype).expand_as(comb)
         hc = self.hc_mult
-        linear_cost = -0.1 * comb.detach()
-        # linear_cost = self.linear_cost.to(device=comb.device, dtype=comb.dtype)
-        hc_balm_r = torch.tensor(self.hc_balm_r, device=comb.device, dtype=comb.dtype)
-        balm_step = hc_balm_r / (self.hc_mult + self.hc_balm_delta)
-        inv_r = 1.0 / hc_balm_r
-        y = torch.zeros(*comb.shape[:-2], 2 * hc, device=comb.device, dtype=comb.dtype)
-        comb_row_sum = comb.sum(dim=-1)
-        comb_col_sum = comb.sum(dim=-2)
+        r = (2.0 * hc) ** 0.5
+        inv_r = 1.0 / r
+        inv_s = r / (2.0 * hc)
+        
+        linear_cost = -r * comb.detach()
+        
+        row_sum_prev = comb.sum(dim=-1)
+        col_sum_prev = comb.sum(dim=-2)
+        u = comb.new_zeros(*comb.shape[:-2], hc)
+        v = comb.new_zeros(*comb.shape[:-2], hc)
+        
         for _ in range(self.hc_iters):
-            u = y[..., :hc]
-            v = y[..., hc:]
+            # update h
             at_y = u.unsqueeze(-1) + v.unsqueeze(-2)
-            q = comb + (at_y - linear_cost) * inv_r
-            comb_next = torch.clamp(q, min=0.0)
-            comb_next_row_sum = comb_next.sum(dim=-1)
-            comb_next_col_sum = comb_next.sum(dim=-2)
-            row_sum = 2.0 * comb_next_row_sum - comb_row_sum
-            col_sum = 2.0 * comb_next_col_sum - comb_col_sum
-            z = (row_sum.sum(dim=-1) - hc) * self.inv_z_denom
-            z_expand = z.unsqueeze(-1)
-            y[..., :hc].sub_(balm_step * (row_sum - 1.0 - z_expand))
-            y[..., hc:].sub_(balm_step * (col_sum - 1.0 - z_expand))
+            comb_next = torch.clamp_min(comb + (at_y - linear_cost) * inv_r, 0.0)
+
+            # update y
+            row_sum = comb_next.sum(dim=-1)
+            col_sum = comb_next.sum(dim=-2)
+            u = u - inv_s * (2.0 * row_sum - row_sum_prev - 1.0)
+            v = v - inv_s * (2.0 * col_sum - col_sum_prev - 1.0)
+            
             comb = comb_next
-            comb_row_sum = comb_next_row_sum
-            comb_col_sum = comb_next_col_sum
+            row_sum_prev, col_sum_prev = row_sum, col_sum
 
-        # One Sinkhorn polish step preserves BALM's sparse support while reducing
-        # finite-iteration row/column mass drift.
-        # comb = comb / (comb.sum(dim=-1, keepdim=True) + self.hc_eps)
-        # comb = comb / (comb.sum(dim=-2, keepdim=True) + self.hc_eps)
-
-        return comb * 1.005
+        # final scale
+        comb = comb * (1.0 + self.comb_scale_max * torch.sigmoid(self.comb_scale))
+        return comb
 
     def compute_mix(self, hidden_streams: torch.Tensor) -> torch.Tensor:
         flat = self.input_norm(hidden_streams.flatten(start_dim=2).float())
