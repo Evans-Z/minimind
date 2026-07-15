@@ -190,7 +190,7 @@ class HyperConnection(nn.Module):
 
     def _project_comb_balm(self, comb: torch.Tensor) -> torch.Tensor:
         hc = self.hc_mult
-        r = (2.0 * hc) ** 0.5
+        r = (1.5 * hc) ** 0.5
         inv_r = 1.0 / r
         inv_s = r / (2.0 * hc)
         

@@ -283,7 +283,7 @@ def test_balm_projection_is_sparse_and_nearly_doubly_stochastic():
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compare mHC comb projection behavior.")
     parser.add_argument("--hc-mult", type=int, default=4)
-    parser.add_argument("--iters", type=int, default=20)
+    parser.add_argument("--iters", type=int, default=12)
     parser.add_argument("--eps", type=float, default=1e-6)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="cpu")
