@@ -1,0 +1,29 @@
+{
+  "hf_root": "hf_models",
+  "output_dir": "eval_results/lm_harness_base",
+  "tasks": [
+    "ceval-valid",
+    "cmmlu",
+    "arc_easy",
+    "piqa",
+    "openbookqa",
+    "hellaswag",
+    "social_iqa"
+  ],
+  "batch_size": 16,
+  "device": "cuda:0",
+  "dtype": "bfloat16",
+  "apply_chat_template": false,
+  "limit": "",
+  "num_fewshot": "",
+  "dry_run": false,
+  "selected_models": [
+    "dense_64m_base"
+  ],
+  "models": {
+    "dense_64m_base": "dense_64m",
+    "dense_64m_mhc": "mhc_64m_balm",
+    "moe_198m_a64m_base": "moe_198m_a64m",
+    "moe_198m_a64m_mhc": "mhc_moe_198m_a64m_balm"
+  }
+}
